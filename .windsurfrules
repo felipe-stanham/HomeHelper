@@ -1,0 +1,46 @@
+# General Instructions
+
+1. Always commit your changes after each step with appropriate commit messages
+2. Create reusable tests for each functionality when applicable. For Web UI use playwright.
+
+# Planning and execution
+
+
+## We follow the shapeup method for planning and developing. 
+
+- We will focus our attention in one project at a time.
+- We will break down the project into smaller chunks called `Scopes`.
+- Each `Scope` will be a group of tasks that are related to each other and implement one feature or functionality of the project.
+- More tasks will appear as we start with development, this is fine and should be added to the corresponding scopes.
+- New `Scopes` can be created if too many tasks are added to an existing `Scope`.
+
+## Project planning
+
+- New projects will be provided as a markdown file named `project-xxxx.md` in the `InputDocs` folder. Where `xxxx` is a the name of the project.
+- BEFORE starting with development, present your propossed solution to me, we will discuss it and agree on the path forward. Once agreed, this must he documented in the `docs` folder.
+- DO NOT Make any changes to the files in the `docs` folder unless explicitly asked to do so.
+- Use the `blackboard.md` as a scratchpad for our discussions about alternatives to the solution, architecture, DB schema, and any other relevant information. 
+- Feel free to delete and modify the `blackboard.md` file each time you need.
+
+### `P-xxxx.md` files
+- After agreeing with a path forward, create a corresponding `P-xxxx.md` file in the `Projects` folder with the `Scopes` and `Tasks` of the project.
+- `Scopes` and `Tasks` will be tracked and kept up to date using todo markers as follows:
+[X] Task 1
+[ ] Task 2
+- `Next Steps` will be used to track the next steps to be taken to complete the project.
+
+## Development
+
+- Always review the content of the corresponding `P-xxxx.md` and `Lessons.md` files on each prompt.
+- Once we have agreed on a path forward, check with me if I want you to start developing the project as a whole, one scope at a time or one task at a time.
+- After each task if finished, update the `P-xxxx.md` file to mark the task as completed and commit your changes.
+
+
+# Documentation
+
+1. Take note of any fix you made or a correction you received in the `Lessons.md` file.
+2. All REST APIs MUST be documented using OpenAPI
+3. Keep up to date diagrams of the architecture using mermaid markdown language. The filename should be `architecture.md` in the `docs` folder (create it if it does not exist)
+4. Keep up to date diagrams of the database schema using mermaid markdown language. The filename should be `database.md` in the `docs` folder (create it if it does not exist)
+5. Always create SQL scripts for schema changes and rollbacks. Keep all SQL scripts in the `migrations` folder (create it if it does not exist).
+
