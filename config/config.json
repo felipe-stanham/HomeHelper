@@ -1,0 +1,26 @@
+{
+  "redis": {
+    "host": "localhost",
+    "port": 6379,
+    "db": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(levelname)s - [%(name)s] - %(message)s"
+  },
+  "process_manager": {
+    "data_dir": "/opt/homehelper/data",
+    "logs_dir": "/opt/homehelper/logs",
+    "streamlit_port": 8501,
+    "streamlit_ttl_seconds": 300,
+    "port_range": {
+      "start": 8100,
+      "end": 8199
+    }
+  },
+  "health_check_interval_seconds": 60,
+  "system": {
+    "main_port": 8000,
+    "host": "0.0.0.0"
+  }
+}
