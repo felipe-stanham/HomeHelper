@@ -78,28 +78,30 @@ class TestSystemMonitor:
         assert metrics['cpu_celsius'] == 45.0
     
     @patch('pathlib.Path.exists')
-    @patch('psutil.sensors_temperatures')
-    def test_get_temperature_metrics_psutil(self, mock_sensors, mock_exists):
+    def test_get_temperature_metrics_psutil(self, mock_exists):
         """Test temperature reading from psutil sensors"""
         mock_exists.return_value = False
-        mock_sensors.return_value = {
-            'cpu_thermal': [MagicMock(current=42.5)]
-        }
         
-        metrics = self.monitor._get_temperature_metrics()
-        
-        assert metrics['cpu_thermal_celsius'] == 42.5
+        with patch('psutil.sensors_temperatures', create=True) as mock_sensors:
+            mock_sensors.return_value = {
+                'cpu_thermal': [MagicMock(current=42.5)]
+            }
+            
+            metrics = self.monitor._get_temperature_metrics()
+            
+            assert metrics['cpu_thermal_celsius'] == 42.5
     
     @patch('pathlib.Path.exists')
-    @patch('psutil.sensors_temperatures')
-    def test_get_temperature_metrics_unavailable(self, mock_sensors, mock_exists):
+    def test_get_temperature_metrics_unavailable(self, mock_exists):
         """Test temperature when no sensors available"""
         mock_exists.return_value = False
-        mock_sensors.return_value = {}
         
-        metrics = self.monitor._get_temperature_metrics()
-        
-        assert metrics['cpu_celsius'] is None
+        with patch('psutil.sensors_temperatures', create=True) as mock_sensors:
+            mock_sensors.return_value = {}
+            
+            metrics = self.monitor._get_temperature_metrics()
+            
+            assert metrics['cpu_celsius'] is None
     
     @patch('psutil.Process')
     def test_get_process_metrics_success(self, mock_process_class):

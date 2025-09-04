@@ -41,16 +41,17 @@ async def lifespan(app: FastAPI):
     config_manager.get_data_dir().mkdir(parents=True, exist_ok=True)
     config_manager.get_logs_dir().mkdir(parents=True, exist_ok=True)
     
-    # Initialize components
-    app.state.system_monitor = SystemMonitor()
-    app.state.redis_monitor = RedisHealthMonitor(config_manager.get_redis_url())
-    
     logger.info("HomeHelper main application started successfully")
     
     yield
     
     # Shutdown
     logger.info("Shutting down HomeHelper main application")
+
+
+# Initialize components at module level for testing
+system_monitor = SystemMonitor()
+redis_monitor = RedisHealthMonitor(config_manager.get_redis_url())
 
 
 # Create FastAPI app
@@ -73,8 +74,6 @@ async def health_check():
     """Main application health check"""
     try:
         config = config_manager.config
-        system_monitor = app.state.system_monitor
-        redis_monitor = app.state.redis_monitor
         
         # Get system metrics
         hardware_metrics = system_monitor.get_hardware_metrics()
@@ -135,7 +134,6 @@ async def health_check():
 async def get_system_metrics():
     """Get detailed system metrics"""
     try:
-        system_monitor = app.state.system_monitor
         return system_monitor.get_system_summary()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -145,7 +143,6 @@ async def get_system_metrics():
 async def get_redis_metrics():
     """Get Redis metrics and status"""
     try:
-        redis_monitor = app.state.redis_monitor
         return redis_monitor.get_redis_metrics()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
