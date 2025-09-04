@@ -9,8 +9,8 @@
     "format": "%(asctime)s - %(levelname)s - [%(name)s] - %(message)s"
   },
   "process_manager": {
-    "data_dir": "/opt/homehelper/data",
-    "logs_dir": "/opt/homehelper/logs",
+    "data_dir": "./data",
+    "logs_dir": "./logs",
     "streamlit_port": 8501,
     "streamlit_ttl_seconds": 300,
     "port_range": {

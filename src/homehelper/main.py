@@ -53,6 +53,11 @@ async def lifespan(app: FastAPI):
 system_monitor = SystemMonitor()
 redis_monitor = RedisHealthMonitor(config_manager.get_redis_url())
 
+# Initialize app management components
+from .managers import AppManager, PortManager
+port_manager = PortManager(config_manager)
+app_manager = AppManager(config_manager, port_manager)
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -153,21 +158,236 @@ async def get_config():
     """Get current configuration (sanitized)"""
     try:
         config = config_manager.config
+        
+        # Return sanitized config (no sensitive data)
         return {
-            "system": config.system.model_dump(),
-            "process_manager": {
-                "data_dir": str(config.process_manager.data_dir),
-                "logs_dir": str(config.process_manager.logs_dir),
-                "streamlit_port": config.process_manager.streamlit_port,
-                "streamlit_ttl_seconds": config.process_manager.streamlit_ttl_seconds,
-                "port_range": config.process_manager.port_range.model_dump()
-            },
-            "health_check_interval_seconds": config.health_check_interval_seconds,
             "redis": {
                 "host": config.redis.host,
                 "port": config.redis.port,
                 "db": config.redis.db
+            },
+            "logging": {
+                "level": config.logging.level,
+                "format": config.logging.format
+            },
+            "process_manager": {
+                "data_dir": config.process_manager.data_dir,
+                "logs_dir": config.process_manager.logs_dir,
+                "streamlit_port": config.process_manager.streamlit_port,
+                "streamlit_ttl_seconds": config.process_manager.streamlit_ttl_seconds,
+                "port_range": {
+                    "start": config.process_manager.port_range.start,
+                    "end": config.process_manager.port_range.end
+                }
+            },
+            "health_check_interval_seconds": config.health_check_interval_seconds,
+            "system": {
+                "main_port": config.system.main_port,
+                "host": config.system.host
             }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# App Management API Endpoints
+
+@app.post("/api/apps/discover")
+async def discover_apps():
+    """Discover applications in the apps directory"""
+    try:
+        count = app_manager.discover_apps()
+        return {
+            "discovered_count": count,
+            "message": f"Discovered {count} new applications"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apps")
+async def get_all_apps():
+    """Get all registered applications"""
+    try:
+        apps = app_manager.registry.get_all_apps()
+        return {
+            "apps": [app.to_dict() for app in apps],
+            "total_count": len(apps)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apps/{app_id}")
+async def get_app(app_id: str):
+    """Get a specific application by ID"""
+    try:
+        app = app_manager.registry.get_app(app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+        
+        return app.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apps/type/{app_type}")
+async def get_apps_by_type(app_type: str):
+    """Get applications by type (service or streamlit)"""
+    try:
+        from .managers.app_manager import AppType
+        
+        if app_type not in [AppType.SERVICE, AppType.STREAMLIT]:
+            raise HTTPException(status_code=400, detail=f"Invalid app type: {app_type}")
+        
+        apps = app_manager.registry.get_apps_by_type(AppType(app_type))
+        return {
+            "apps": [app.to_dict() for app in apps],
+            "type": app_type,
+            "count": len(apps)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apps/status/{status}")
+async def get_apps_by_status(status: str):
+    """Get applications by status"""
+    try:
+        from .managers.app_manager import AppStatus
+        
+        valid_statuses = [s.value for s in AppStatus]
+        if status not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid status: {status}. Valid statuses: {valid_statuses}")
+        
+        apps = app_manager.registry.get_apps_by_status(AppStatus(status))
+        return {
+            "apps": [app.to_dict() for app in apps],
+            "status": status,
+            "count": len(apps)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/apps/{app_id}/prepare")
+async def prepare_app(app_id: str):
+    """Prepare an application (install dependencies, run setup)"""
+    try:
+        app = app_manager.registry.get_app(app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+        
+        success = app_manager.prepare_app(app_id)
+        if success:
+            updated_app = app_manager.registry.get_app(app_id)
+            return {
+                "success": True,
+                "message": f"App {app_id} prepared successfully",
+                "app": updated_app.to_dict()
+            }
+        else:
+            updated_app = app_manager.registry.get_app(app_id)
+            error_msg = updated_app.runtime_info.error_message if updated_app.runtime_info.error_message else "Unknown error"
+            return {
+                "success": False,
+                "message": f"Failed to prepare app {app_id}: {error_msg}",
+                "app": updated_app.to_dict()
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/apps/{app_id}")
+async def unregister_app(app_id: str):
+    """Unregister an application"""
+    try:
+        app = app_manager.registry.get_app(app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+        
+        # Release port if allocated
+        if app.runtime_info.assigned_port:
+            port_manager.release_port(app_id)
+        
+        success = app_manager.registry.unregister_app(app_id)
+        if success:
+            return {
+                "success": True,
+                "message": f"App {app_id} unregistered successfully"
+            }
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to unregister app {app_id}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apps/statistics")
+async def get_app_statistics():
+    """Get application statistics"""
+    try:
+        stats = app_manager.get_app_statistics()
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Port Management API Endpoints
+
+@app.get("/api/ports")
+async def get_port_allocations():
+    """Get all port allocations"""
+    try:
+        allocations = port_manager.get_allocated_ports()
+        return {
+            "allocations": [alloc.to_dict() for alloc in allocations],
+            "count": len(allocations)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ports/available")
+async def get_available_ports():
+    """Get available ports"""
+    try:
+        available = port_manager.get_available_ports()
+        return {
+            "available_ports": available,
+            "count": len(available)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ports/statistics")
+async def get_port_statistics():
+    """Get port allocation statistics"""
+    try:
+        stats = port_manager.get_port_statistics()
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ports/cleanup")
+async def cleanup_stale_ports():
+    """Clean up stale port allocations"""
+    try:
+        cleaned = port_manager.cleanup_stale_allocations()
+        return {
+            "cleaned_count": cleaned,
+            "message": f"Cleaned up {cleaned} stale port allocations"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

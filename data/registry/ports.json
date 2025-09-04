@@ -1,0 +1,12 @@
+{
+  "allocations": {
+    "8100": {
+      "port": 8100,
+      "app_id": "sample-service",
+      "app_type": "service",
+      "allocated_at": "2025-09-04T13:08:04.973826",
+      "status": "allocated"
+    }
+  },
+  "last_updated": "2025-09-04T13:08:04.973898"
+}

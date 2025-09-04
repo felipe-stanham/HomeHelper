@@ -1,0 +1,46 @@
+{
+  "apps": {
+    "sample-service": {
+      "app_id": "sample-service",
+      "name": "sample-service",
+      "type": "service",
+      "description": "Sample service application for testing HomeHelper",
+      "version": "1.0.0",
+      "status": "ready",
+      "path": "/Users/felipestanham/CascadeProjects/HomeHelper/apps/sample-service",
+      "manifest": {
+        "name": "sample-service",
+        "type": "service",
+        "description": "Sample service application for testing HomeHelper",
+        "version": "1.0.0",
+        "main": "main.py",
+        "requirements": "requirements.txt",
+        "setup_commands": [
+          "echo 'Setting up sample service...'"
+        ],
+        "endpoints": {
+          "health": "/health",
+          "ui": "/ui",
+          "metrics": null
+        },
+        "environment": {
+          "SERVICE_NAME": "sample-service",
+          "DEBUG": "true"
+        }
+      },
+      "runtime_info": {
+        "assigned_port": 8100,
+        "process_id": null,
+        "service_name": null,
+        "started_at": null,
+        "last_health_check": null,
+        "resource_usage": null,
+        "error_message": null
+      },
+      "discovered_at": "2025-09-04T13:08:01.933858",
+      "last_updated": "2025-09-04T13:08:04.975045"
+    }
+  },
+  "last_updated": "2025-09-04T13:08:04.975133",
+  "version": "1.0"
+}

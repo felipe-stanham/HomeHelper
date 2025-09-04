@@ -1,0 +1,19 @@
+{
+  "name": "sample-service",
+  "type": "service",
+  "description": "Sample service application for testing HomeHelper",
+  "version": "1.0.0",
+  "main": "main.py",
+  "requirements": "requirements.txt",
+  "endpoints": {
+    "health": "/health",
+    "ui": "/ui"
+  },
+  "setup_commands": [
+    "echo 'Setting up sample service...'"
+  ],
+  "environment": {
+    "SERVICE_NAME": "sample-service",
+    "DEBUG": "true"
+  }
+}

@@ -130,8 +130,8 @@ graph TB
 graph LR
     subgraph "Service App"
         Main[main.py<br/>FastAPI/Flask]
-        Health[/health endpoint]
-        UI[/ui endpoint<br/>REST API]
+        Health[&sol;health endpoint]
+        UI[&sol;ui endpoint<br/>REST API]
         Logic[Business Logic]
         Data[Data Processing]
     end
