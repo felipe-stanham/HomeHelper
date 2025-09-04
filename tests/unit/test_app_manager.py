@@ -32,19 +32,23 @@ class TestAppManifest:
             "type": "service",
             "description": "Test service application",
             "version": "1.0.0",
-            "main": "main.py",
-            "requirements": "requirements.txt",
-            "endpoints": {
-                "health": "/health",
-                "ui": "/ui"
+            "author": "Test Author",
+            "main_file": "app.py",
+            "config": {
+                "has_UI": True,
+                "redis_required": False
+            },
+            "install": {
+                "setup_commands": ["echo 'setup complete'"]
             }
         }
         
         manifest = AppManifest(**data)
         assert manifest.name == "test-service"
         assert manifest.type == AppType.SERVICE
-        assert manifest.endpoints.health == "/health"
-        assert manifest.endpoints.ui == "/ui"
+        assert manifest.config.has_UI == True
+        assert manifest.config.redis_required == False
+        assert manifest.install.setup_commands == ["echo 'setup complete'"]
     
     def test_valid_streamlit_manifest(self):
         """Test valid Streamlit app manifest"""
@@ -53,13 +57,15 @@ class TestAppManifest:
             "type": "streamlit",
             "description": "Data visualization dashboard",
             "version": "2.1.0",
-            "main": "app.py"
+            "author": "Viz Author",
+            "main_file": "app.py"
         }
         
         manifest = AppManifest(**data)
         assert manifest.name == "data-viz"
         assert manifest.type == AppType.STREAMLIT
-        assert manifest.requirements == "requirements.txt"  # Default value
+        assert manifest.config.has_UI == False  # Default value
+        assert manifest.config.auto_start == False  # Default value
     
     def test_invalid_version_format(self):
         """Test invalid version format"""
@@ -68,7 +74,8 @@ class TestAppManifest:
             "type": "service",
             "description": "Test app",
             "version": "1.0",  # Invalid format
-            "main": "main.py"
+            "author": "Test Author",
+            "main_file": "app.py"
         }
         
         with pytest.raises(Exception):  # Pydantic ValidationError
@@ -79,7 +86,7 @@ class TestAppManifest:
         data = {
             "name": "test-app",
             "type": "service"
-            # Missing description, version, main
+            # Missing required fields: description, version, author, main_file
         }
         
         with pytest.raises(Exception):  # Pydantic ValidationError
@@ -121,7 +128,8 @@ class TestAppRegistryEntry:
             type=AppType.SERVICE,
             description="Test application",
             version="1.0.0",
-            main="main.py"
+            author="Test Author",
+            main_file="app.py"
         )
     
     def test_registry_entry_creation(self, sample_manifest, tmp_path):
@@ -197,7 +205,8 @@ class TestAppRegistry:
             type=AppType.SERVICE,
             description="Test application",
             version="1.0.0",
-            main="main.py"
+            author="Test Author",
+            main_file="app.py"
         )
         
         return AppRegistryEntry(
@@ -268,7 +277,7 @@ class TestAppRegistry:
         # Create service app
         service_manifest = AppManifest(
             name="service-app", type=AppType.SERVICE, description="Service", 
-            version="1.0.0", main="main.py"
+            version="1.0.0", author="Service Author", main_file="app.py"
         )
         service_entry = AppRegistryEntry(
             app_id="service-1", name="service-app", type=AppType.SERVICE,
@@ -278,8 +287,8 @@ class TestAppRegistry:
         
         # Create Streamlit app
         streamlit_manifest = AppManifest(
-            name="streamlit-app", type=AppType.STREAMLIT, description="Streamlit",
-            version="1.0.0", main="app.py"
+            name="streamlit-app", type=AppType.STREAMLIT, description="Streamlit", 
+            version="1.0.0", author="Streamlit Author", main_file="app.py"
         )
         streamlit_entry = AppRegistryEntry(
             app_id="streamlit-1", name="streamlit-app", type=AppType.STREAMLIT,
@@ -319,7 +328,7 @@ class TestAppRegistry:
         
         manifest = AppManifest(
             name="test-app", type=AppType.SERVICE, description="Test",
-            version="1.0.0", main="main.py"
+            version="1.0.0", author="Test Author", main_file="app.py"
         )
         entry = AppRegistryEntry(
             app_id="test-1", name="test-app", type=AppType.SERVICE,
@@ -405,7 +414,8 @@ class TestAppManager:
             "type": "service",
             "description": "Test service application",
             "version": "1.0.0",
-            "main": "main.py"
+            "author": "Test Author",
+            "main_file": "app.py"
         }
         
         manifest_file = app_dir / "homehelper.json"
@@ -413,7 +423,7 @@ class TestAppManager:
             json.dump(manifest_data, f)
         
         # Create main file
-        main_file = app_dir / "main.py"
+        main_file = app_dir / "app.py"
         main_file.write_text("# Test main file")
         
         # Discover apps
@@ -434,7 +444,7 @@ class TestAppManager:
         # Create invalid manifest (missing required fields)
         manifest_data = {
             "name": "invalid-app"
-            # Missing type, description, version, main
+            # Missing type, description, version, author, main_file
         }
         
         manifest_file = app_dir / "homehelper.json"
@@ -459,7 +469,8 @@ class TestAppManager:
             "type": "service",
             "description": "App with missing main file",
             "version": "1.0.0",
-            "main": "nonexistent.py"
+            "author": "Test Author",
+            "main_file": "nonexistent.py"
         }
         
         manifest_file = app_dir / "homehelper.json"
@@ -482,17 +493,18 @@ class TestAppManager:
         # Create manifest and files
         manifest_data = {
             "name": "test-app",
-            "type": "service", 
+            "type": "service",
             "description": "Test app",
             "version": "1.0.0",
-            "main": "main.py",
+            "author": "Test Author",
+            "main_file": "app.py",
             "requirements": "requirements.txt"
         }
         
         (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
         (app_dir / "main.py").write_text("# Main file")
         (app_dir / "requirements.txt").write_text("requests==2.28.0")
-        
+{{ ... }}
         # Discover app
         app_manager.discover_apps()
         apps = app_manager.registry.get_all_apps()
@@ -521,8 +533,8 @@ class TestAppManager:
             "type": "service",
             "description": "Test app", 
             "version": "1.0.0",
-            "main": "main.py",
-            "requirements": "requirements.txt"
+            "author": "Test Author",
+            "main_file": "app.py"
         }
         
         (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
@@ -557,7 +569,8 @@ class TestAppManager:
             "type": "service",
             "description": "Test service",
             "version": "1.0.0", 
-            "main": "main.py"
+            "author": "Test Author",
+            "main_file": "app.py"
         }
         
         (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
@@ -598,11 +611,12 @@ class TestAppManager:
                 "type": app_type,
                 "description": f"Test {app_type} app",
                 "version": "1.0.0",
-                "main": "main.py" if app_type == "service" else "app.py"
+                "author": "Test Author",
+                "main_file": "app.py"
             }
             
             (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
-            (app_dir / ("main.py" if app_type == "service" else "app.py")).write_text("# Main")
+            (app_dir / "app.py").write_text("# Main")
         
         app_manager.discover_apps()
         

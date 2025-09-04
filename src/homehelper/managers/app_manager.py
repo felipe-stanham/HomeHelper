@@ -39,11 +39,19 @@ class AppStatus(str, Enum):
     ERROR = "error"
 
 
-class AppEndpoints(BaseModel):
-    """Application endpoint configuration"""
-    health: Optional[str] = "/health"
-    ui: Optional[str] = "/ui"
-    metrics: Optional[str] = None
+class AppConfig(BaseModel):
+    """Application configuration options"""
+    has_UI: bool = False
+    redis_required: bool = False
+    logs_dir: bool = False
+    data_dir: bool = False
+    auto_start: bool = False
+    restart_policy: str = Field(default="always", pattern=r'^(always|on-failure|never)$')
+
+
+class AppInstall(BaseModel):
+    """Application installation configuration"""
+    setup_commands: Optional[List[str]] = None
 
 
 class AppManifest(BaseModel):
@@ -52,11 +60,10 @@ class AppManifest(BaseModel):
     type: AppType
     description: str = Field(..., min_length=1, max_length=200)
     version: str = Field(..., pattern=r'^\d+\.\d+\.\d+$')
-    main: str = Field(..., min_length=1)
-    requirements: Optional[str] = "requirements.txt"
-    setup_commands: Optional[List[str]] = None
-    endpoints: Optional[AppEndpoints] = None
-    environment: Optional[Dict[str, str]] = None
+    author: str = Field(..., min_length=1, max_length=100)
+    main_file: str = Field(..., min_length=1)
+    config: Optional[AppConfig] = Field(default_factory=AppConfig)
+    install: Optional[AppInstall] = Field(default_factory=AppInstall)
     
     class Config:
         use_enum_values = True
@@ -339,15 +346,15 @@ class AppManager:
             
             # Additional validation
             app_path = manifest_file.parent
-            main_file = app_path / manifest.main
+            main_file = app_path / manifest.main_file
             if not main_file.exists():
-                self.logger.error(f"Main file {manifest.main} not found in {app_path}")
+                self.logger.error(f"Main file {manifest.main_file} not found in {app_path}")
                 return None
             
-            if manifest.requirements:
-                req_file = app_path / manifest.requirements
-                if not req_file.exists():
-                    self.logger.warning(f"Requirements file {manifest.requirements} not found in {app_path}")
+            # Check for requirements.txt (default if not specified)
+            req_file = app_path / "requirements.txt"
+            if not req_file.exists():
+                self.logger.warning(f"Requirements file requirements.txt not found in {app_path}")
             
             return manifest
             
@@ -462,13 +469,13 @@ class AppManager:
             True if setup successful
         """
         app = self.registry.get_app(app_id)
-        if not app or not app.manifest.setup_commands:
+        if not app or not app.manifest.install or not app.manifest.install.setup_commands:
             return True
         
         try:
             self.logger.info(f"Running setup commands for app {app_id}")
             
-            for command in app.manifest.setup_commands:
+            for command in app.manifest.install.setup_commands:
                 self.logger.debug(f"Running setup command: {command}")
                 
                 result = subprocess.run(
