@@ -54,9 +54,12 @@ system_monitor = SystemMonitor()
 redis_monitor = RedisHealthMonitor(config_manager.get_redis_url())
 
 # Initialize app management components
-from .managers import AppManager, PortManager
+from .managers import AppManager, PortManager, ServiceManager
+from .managers.health_monitor import HealthMonitor
 port_manager = PortManager(config_manager)
 app_manager = AppManager(config_manager, port_manager)
+service_manager = ServiceManager(config_manager, app_manager)
+health_monitor = HealthMonitor(config_manager, app_manager, service_manager)
 
 
 # Create FastAPI app
@@ -374,9 +377,239 @@ async def get_available_ports():
 async def get_port_statistics():
     """Get port allocation statistics"""
     try:
-        stats = port_manager.get_port_statistics()
-        return stats
+        stats = port_manager.get_statistics()
+        return {"success": True, "data": stats}
     except Exception as e:
+        logger.error(f"Failed to get port statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Service Management API Endpoints
+
+@app.post("/api/services/{app_id}/create")
+async def create_service(app_id: str):
+    """Create systemd service file for an app"""
+    try:
+        success = service_manager.create_service_file(app_id)
+        if success:
+            return {"success": True, "message": f"Service file created for app {app_id}"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to create service file for app {app_id}")
+    except Exception as e:
+        logger.error(f"Failed to create service for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/services/{app_id}/start")
+async def start_service(app_id: str):
+    """Start systemd service for an app"""
+    try:
+        success = service_manager.start_service(app_id)
+        if success:
+            return {"success": True, "message": f"Service started for app {app_id}"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to start service for app {app_id}")
+    except Exception as e:
+        logger.error(f"Failed to start service for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/services/{app_id}/stop")
+async def stop_service(app_id: str):
+    """Stop systemd service for an app"""
+    try:
+        success = service_manager.stop_service(app_id)
+        if success:
+            return {"success": True, "message": f"Service stopped for app {app_id}"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to stop service for app {app_id}")
+    except Exception as e:
+        logger.error(f"Failed to stop service for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/services/{app_id}/restart")
+async def restart_service(app_id: str):
+    """Restart systemd service for an app"""
+    try:
+        success = service_manager.restart_service(app_id)
+        if success:
+            return {"success": True, "message": f"Service restarted for app {app_id}"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to restart service for app {app_id}")
+    except Exception as e:
+        logger.error(f"Failed to restart service for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/services/{app_id}/status")
+async def get_service_status(app_id: str):
+    """Get detailed service status for an app"""
+    try:
+        status = service_manager.get_service_status(app_id)
+        if status:
+            return {"success": True, "data": status.to_dict()}
+        else:
+            raise HTTPException(status_code=404, detail=f"Service status not found for app {app_id}")
+    except Exception as e:
+        logger.error(f"Failed to get service status for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/services/{app_id}/logs")
+async def get_service_logs(app_id: str, lines: int = 50):
+    """Get recent service logs for an app"""
+    try:
+        logs = service_manager.get_service_logs(app_id, lines)
+        return {"success": True, "data": {"logs": logs, "lines": len(logs)}}
+    except Exception as e:
+        logger.error(f"Failed to get service logs for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/services/{app_id}/enable")
+async def enable_service(app_id: str):
+    """Enable service to start automatically"""
+    try:
+        success = service_manager.enable_service(app_id)
+        if success:
+            return {"success": True, "message": f"Service enabled for app {app_id}"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to enable service for app {app_id}")
+    except Exception as e:
+        logger.error(f"Failed to enable service for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/services/{app_id}/disable")
+async def disable_service(app_id: str):
+    """Disable service from starting automatically"""
+    try:
+        success = service_manager.disable_service(app_id)
+        if success:
+            return {"success": True, "message": f"Service disabled for app {app_id}"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to disable service for app {app_id}")
+    except Exception as e:
+        logger.error(f"Failed to disable service for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/services/{app_id}")
+async def remove_service(app_id: str):
+    """Remove service file and stop service"""
+    try:
+        success = service_manager.remove_service(app_id)
+        if success:
+            return {"success": True, "message": f"Service removed for app {app_id}"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to remove service for app {app_id}")
+    except Exception as e:
+        logger.error(f"Failed to remove service for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/services")
+async def get_all_service_statuses():
+    """Get status for all managed services"""
+    try:
+        statuses = service_manager.get_all_service_statuses()
+        return {"success": True, "data": {app_id: status.to_dict() for app_id, status in statuses.items()}}
+    except Exception as e:
+        logger.error(f"Failed to get all service statuses: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/services/statistics")
+async def get_service_statistics():
+    """Get service management statistics"""
+    try:
+        stats = service_manager.get_service_statistics()
+        return {"success": True, "data": stats}
+    except Exception as e:
+        logger.error(f"Failed to get service statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Health Monitoring API Endpoints
+
+@app.post("/api/health/start")
+async def start_health_monitoring():
+    """Start health monitoring system"""
+    try:
+        await health_monitor.start_monitoring()
+        return {"success": True, "message": "Health monitoring started"}
+    except Exception as e:
+        logger.error(f"Failed to start health monitoring: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/health/stop")
+async def stop_health_monitoring():
+    """Stop health monitoring system"""
+    try:
+        await health_monitor.stop_monitoring()
+        return {"success": True, "message": "Health monitoring stopped"}
+    except Exception as e:
+        logger.error(f"Failed to stop health monitoring: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/health/{app_id}")
+async def get_app_health(app_id: str):
+    """Get health status for a specific app"""
+    try:
+        health = health_monitor.get_health_status(app_id)
+        if health:
+            return {"success": True, "data": health.to_dict()}
+        else:
+            raise HTTPException(status_code=404, detail=f"Health status not found for app {app_id}")
+    except Exception as e:
+        logger.error(f"Failed to get health status for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/health")
+async def get_all_health_statuses():
+    """Get health status for all monitored apps"""
+    try:
+        statuses = health_monitor.get_all_health_statuses()
+        return {"success": True, "data": {app_id: status.to_dict() for app_id, status in statuses.items()}}
+    except Exception as e:
+        logger.error(f"Failed to get all health statuses: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/health/statistics")
+async def get_health_statistics():
+    """Get health monitoring statistics"""
+    try:
+        stats = health_monitor.get_health_statistics()
+        return {"success": True, "data": stats}
+    except Exception as e:
+        logger.error(f"Failed to get health statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/health/config")
+async def update_health_config(config: dict):
+    """Update health monitoring configuration"""
+    try:
+        health_monitor.update_config(**config)
+        return {"success": True, "message": "Health monitoring configuration updated"}
+    except Exception as e:
+        logger.error(f"Failed to update health config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/health/status")
+async def get_health_monitoring_status():
+    """Get health monitoring system status"""
+    try:
+        is_running = health_monitor.is_monitoring()
+        return {"success": True, "data": {"monitoring": is_running}}
+    except Exception as e:
+        logger.error(f"Failed to get health monitoring status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

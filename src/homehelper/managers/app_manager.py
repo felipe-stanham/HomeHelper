@@ -79,6 +79,8 @@ class AppRuntimeInfo:
     last_health_check: Optional[datetime] = None
     resource_usage: Optional[Dict[str, float]] = None
     error_message: Optional[str] = None
+    service_status: Optional[str] = None  # systemd service status
+    health_status: Optional[str] = None   # health check status
     
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""

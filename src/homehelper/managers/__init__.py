@@ -1,17 +1,22 @@
 """
 HomeHelper Managers Package
 
-This package contains the core management components for HomeHelper:
-- App Manager: Application discovery and lifecycle management
-- Service Manager: systemd integration for background services
-- UI Manager: On-demand Streamlit application management
+Exports manager classes for application, port, and service management.
 """
 
-from .app_manager import AppManager, AppRegistry
+from .app_manager import AppManager, AppRegistry, AppManifest, AppType, AppStatus
 from .port_manager import PortManager
+from .service_manager import ServiceManager, ServiceInfo, ServiceStatus, ServiceState
 
 __all__ = [
-    "AppManager",
-    "AppRegistry", 
-    "PortManager"
+    'AppManager',
+    'AppRegistry', 
+    'AppManifest',
+    'AppType',
+    'AppStatus',
+    'PortManager',
+    'ServiceManager',
+    'ServiceInfo',
+    'ServiceStatus',
+    'ServiceState'
 ]
