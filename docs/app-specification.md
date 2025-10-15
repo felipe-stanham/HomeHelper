@@ -70,6 +70,8 @@ Each app must include a `homehelper.json` file in its root directory:
 - **config.auto_start**: Boolean, start on main app startup (default: false)
 - **config.restart_policy**: `"always"`, `"on-failure"`, `"never"` (default: "always")
 - **install.setup_commands**: Shell commands to run during installation
+- **events.publishes**: Array of event types this app publishes (see Redis Events section)
+- **events.subscribes**: Array of event types this app subscribes to (see Redis Events section)
 
 ## Service App Requirements
 
@@ -289,12 +291,113 @@ for message in pubsub.listen():
         # Handle event...
 ```
 
+### Event Declaration in Manifest
+
+Apps should declare the events they publish and subscribe to in their `homehelper.json` manifest. This provides self-documentation, enables validation, and helps with debugging.
+
+**Example**:
+```json
+{
+  "name": "Camera Detection",
+  "events": {
+    "publishes": [
+      {
+        "type": "motion.detected",
+        "description": "Triggered when motion is detected in camera feed",
+        "schema": {
+          "camera_id": "string",
+          "confidence": "float",
+          "location": "string",
+          "image_url": "string (optional)"
+        }
+      },
+      {
+        "type": "camera.recording.started",
+        "description": "Camera started recording",
+        "schema": {
+          "camera_id": "string",
+          "duration": "integer",
+          "reason": "string"
+        }
+      }
+    ],
+    "subscribes": [
+      {
+        "type": "door.opened",
+        "description": "Listen for door events to trigger camera",
+        "handler": "on_door_opened"
+      },
+      {
+        "type": "alarm.triggered",
+        "description": "Start recording on alarm",
+        "handler": "on_alarm_triggered"
+      }
+    ]
+  }
+}
+```
+
+**Event Declaration Fields**:
+
+For **publishes**:
+- `type`: Event type using dot notation (required)
+- `description`: Human-readable description of when this event is published (required)
+- `schema`: Object describing the data fields and their types (required)
+
+For **subscribes**:
+- `type`: Event type to subscribe to, supports wildcards (e.g., "motion.*") (required)
+- `description`: Why the app subscribes to this event (required)
+- `handler`: Name of the handler function in your code (optional, for documentation)
+
 ### Best Practices
-- Use descriptive event types with dot notation (category.subcategory.action)
-- Always include timestamp in Unix format
-- Keep data payload focused and relevant
-- Use async/threading for subscribers to avoid blocking main app
-- Handle connection failures gracefully with reconnection logic
+
+#### Event Naming Convention
+- Use dot notation: `category.subcategory.action`
+- Use lowercase with underscores for multi-word components
+- Examples:
+  - ✅ `motion.detected`
+  - ✅ `camera.recording.started`
+  - ✅ `temperature.threshold.exceeded`
+  - ❌ `MotionDetected`
+  - ❌ `camera-recording-started`
+
+#### Event Declaration
+- **Always declare events in manifest**: This enables discovery and validation
+- **Keep schemas simple**: Only include essential data fields
+- **Document optional fields**: Mark optional fields in schema description
+- **Version your events**: If schema changes, consider using `motion.detected.v2`
+
+#### Event Publishing
+- **Include all required fields**: Always include `source`, `event_type`, `timestamp`, and `data`
+- **Validate before publishing**: Ensure data matches declared schema
+- **Don't publish too frequently**: Batch events or use debouncing for high-frequency events
+- **Use appropriate data types**: Timestamps as integers, booleans as booleans, etc.
+- **Keep payload small**: Avoid large data in events, use references instead
+
+#### Event Subscribing
+- **Use specific subscriptions**: Subscribe to specific events when possible, not wildcards
+- **Handle events asynchronously**: Don't block the subscriber thread
+- **Implement error handling**: Events may have unexpected formats
+- **Validate received data**: Don't trust event data blindly
+- **Log subscription errors**: Help with debugging integration issues
+
+#### Performance Considerations
+- **Batch events**: If publishing many events, consider batching
+- **Use TTL for transient data**: Don't store events indefinitely
+- **Monitor queue depth**: Watch for subscriber backlog
+- **Implement circuit breakers**: Stop processing if downstream is failing
+
+#### Security
+- **No sensitive data**: Don't include passwords, tokens, or PII in events
+- **Validate event source**: Verify events come from expected apps
+- **Sanitize data**: Clean user input before publishing
+- **Use encryption**: For sensitive operational data, encrypt the payload
+
+#### Error Handling
+- **Graceful degradation**: App should work if Redis is unavailable
+- **Reconnection logic**: Automatically reconnect on connection loss
+- **Dead letter handling**: Log events that fail to process
+- **Idempotency**: Handle duplicate events gracefully
 
 ## Data and Logs Directories
 
@@ -488,6 +591,37 @@ my_sensor_app/
     "auto_start": true,
     "restart_policy": "always"
   },
+  "events": {
+    "publishes": [
+      {
+        "type": "temperature.reading",
+        "description": "Published every time a temperature reading is taken",
+        "schema": {
+          "sensor": "string",
+          "temperature": "float",
+          "humidity": "float",
+          "timestamp": "integer"
+        }
+      },
+      {
+        "type": "temperature.threshold.exceeded",
+        "description": "Published when temperature exceeds configured threshold",
+        "schema": {
+          "sensor": "string",
+          "temperature": "float",
+          "threshold": "float",
+          "severity": "string"
+        }
+      }
+    ],
+    "subscribes": [
+      {
+        "type": "system.config.updated",
+        "description": "Listen for configuration changes to update thresholds",
+        "handler": "on_config_updated"
+      }
+    ]
+  },
   "install": {
     "setup_commands": []
   }
@@ -600,7 +734,28 @@ async def get_reading(reading_id: int):
     }
 
 # Example: Publishing to Redis
-def publish_temperature_alert(sensor: str, temperature: float):
+def publish_temperature_reading(sensor: str, temperature: float, humidity: float):
+    """Publish regular temperature reading event"""
+    if redis_client:
+        event = {
+            "source": "temperature_monitor",
+            "event_type": "temperature.reading",
+            "timestamp": int(datetime.now().timestamp()),
+            "data": {
+                "sensor": sensor,
+                "temperature": temperature,
+                "humidity": humidity,
+                "timestamp": int(datetime.now().timestamp())
+            }
+        }
+        redis_client.publish(
+            "homehelper:events:temperature.reading",
+            json.dumps(event)
+        )
+        logger.debug(f"Published reading for {sensor}: {temperature}°C")
+
+def publish_temperature_alert(sensor: str, temperature: float, threshold: float):
+    """Publish temperature threshold exceeded event"""
     if redis_client:
         event = {
             "source": "temperature_monitor",
@@ -609,18 +764,57 @@ def publish_temperature_alert(sensor: str, temperature: float):
             "data": {
                 "sensor": sensor,
                 "temperature": temperature,
-                "threshold": 25.0
+                "threshold": threshold,
+                "severity": "high" if temperature > threshold + 5 else "medium"
             }
         }
         redis_client.publish(
             "homehelper:events:temperature.threshold.exceeded",
             json.dumps(event)
         )
-        logger.info(f"Published alert for {sensor}: {temperature}°C")
+        logger.warning(f"Published alert for {sensor}: {temperature}°C (threshold: {threshold}°C)")
+
+# Example: Subscribing to Redis events
+def start_event_subscriber():
+    """Start listening to subscribed events in background thread"""
+    if not redis_client:
+        return
+    
+    import threading
+    
+    def event_listener():
+        pubsub = redis_client.pubsub()
+        pubsub.subscribe("homehelper:events:system.config.updated")
+        logger.info("Started event subscriber")
+        
+        for message in pubsub.listen():
+            if message['type'] == 'message':
+                try:
+                    event = json.loads(message['data'])
+                    event_type = event.get('event_type')
+                    
+                    if event_type == 'system.config.updated':
+                        on_config_updated(event)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing event: {e}")
+    
+    # Start subscriber in background thread
+    thread = threading.Thread(target=event_listener, daemon=True)
+    thread.start()
+
+def on_config_updated(event):
+    """Handler for system.config.updated events"""
+    logger.info(f"Configuration updated: {event.get('data', {})}")
+    # Reload configuration or update thresholds here
 
 # Start the server
 if __name__ == "__main__":
     logger.info(f"Starting Temperature Monitor on port {args.port}")
+    
+    # Start event subscriber if Redis is available
+    start_event_subscriber()
+    
     uvicorn.run(app, host="0.0.0.0", port=args.port)
 ```
 
@@ -653,10 +847,13 @@ curl http://localhost:8100/api/readings/1
 - [ ] Logs are written to logs directory (if `logs_dir: true`)
 - [ ] Data persists in data directory across restarts (if `data_dir: true`)
 - [ ] Redis events are published correctly (if `redis_required: true`)
+- [ ] Published events match declared schema in manifest
+- [ ] Event subscriptions work and handlers are called
 - [ ] All REST API endpoints return valid responses (if `/ui` implemented)
 - [ ] Error handling returns proper HTTP status codes
 - [ ] App handles missing optional arguments gracefully
 - [ ] homehelper.json manifest is valid JSON with all required fields
+- [ ] Event declarations in manifest match actual implementation
 - [ ] requirements.txt includes all necessary dependencies
 
 ### Common Issues
