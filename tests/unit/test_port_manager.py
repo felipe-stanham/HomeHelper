@@ -264,8 +264,8 @@ class TestPortManager:
             assert stats_after['app_type_breakdown']['service'] == 1
             assert stats_after['app_type_breakdown']['streamlit'] == 1
     
-    def test_persistence_save_and_load(self, mock_config_manager, temp_config_dir):
-        """Test saving and loading port allocations"""
+    def test_in_memory_only_no_persistence(self, mock_config_manager, temp_config_dir):
+        """Test that port manager is in-memory only (no persistence)"""
         with patch('socket.socket') as mock_socket:
             mock_socket.return_value.__enter__.return_value.bind.return_value = None
             
@@ -274,25 +274,25 @@ class TestPortManager:
             port1 = port_manager1.allocate_port("app1", "service")
             port2 = port_manager1.allocate_port("app2", "streamlit")
             
-            # Create second port manager (should load from disk)
+            assert len(port_manager1.allocations) == 2
+            
+            # Create second port manager (should be empty - no persistence)
             port_manager2 = PortManager(mock_config_manager)
             
-            # Should have loaded the allocations
-            assert len(port_manager2.allocations) == 2
-            assert port_manager2.get_app_port("app1") == port1
-            assert port_manager2.get_app_port("app2") == port2
+            # Should be empty - fresh start
+            assert len(port_manager2.allocations) == 0
+            assert port_manager2.get_app_port("app1") is None
+            assert port_manager2.get_app_port("app2") is None
     
-    def test_persistence_corrupted_file(self, mock_config_manager, temp_config_dir):
-        """Test handling of corrupted persistence file"""
-        # Create corrupted file
-        ports_file = temp_config_dir / "registry" / "ports.json"
-        ports_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(ports_file, 'w') as f:
-            f.write("invalid json content")
-        
+    def test_no_persistence_files_created(self, mock_config_manager, temp_config_dir):
+        """Test that no persistence files are created"""
         with patch('socket.socket') as mock_socket:
             mock_socket.return_value.__enter__.return_value.bind.return_value = None
             
-            # Should handle corrupted file gracefully
+            # Create port manager and allocate ports
             port_manager = PortManager(mock_config_manager)
-            assert len(port_manager.allocations) == 0
+            port_manager.allocate_port("app1", "service")
+            
+            # Verify no persistence files were created
+            ports_file = temp_config_dir / "registry" / "ports.json"
+            assert not ports_file.exists()  # No persistence file should be created

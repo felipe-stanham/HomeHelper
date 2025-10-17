@@ -142,70 +142,21 @@ class AppRegistryEntry:
 
 
 class AppRegistry:
-    """In-memory application registry with persistence"""
+    """In-memory application registry"""
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
         self.logger = logging.getLogger("homehelper.app_registry")
         
-        # Registry storage
+        # Registry storage (in-memory only)
         self.apps: Dict[str, AppRegistryEntry] = {}
         
-        # Persistence
-        self.registry_dir = Path(config_manager.get_data_dir()) / "registry"
-        self.registry_dir.mkdir(parents=True, exist_ok=True)
-        self.registry_file = self.registry_dir / "apps.json"
-        
-        # Load existing registry
-        self._load_registry()
-    
-    def _load_registry(self) -> None:
-        """Load app registry from disk"""
-        try:
-            if self.registry_file.exists():
-                with open(self.registry_file, 'r') as f:
-                    data = json.load(f)
-                
-                for app_id, app_data in data.get('apps', {}).items():
-                    try:
-                        entry = AppRegistryEntry.from_dict(app_data)
-                        self.apps[app_id] = entry
-                    except Exception as e:
-                        self.logger.error(f"Failed to load app {app_id}: {e}")
-                
-                self.logger.info(f"Loaded {len(self.apps)} apps from registry")
-            else:
-                self.logger.info("No existing app registry found")
-                
-        except Exception as e:
-            self.logger.error(f"Failed to load app registry: {e}")
-            self.apps = {}
-    
-    def _save_registry(self) -> None:
-        """Save app registry to disk"""
-        try:
-            data = {
-                'apps': {app_id: app.to_dict() for app_id, app in self.apps.items()},
-                'last_updated': datetime.now().isoformat(),
-                'version': '1.0'
-            }
-            
-            # Atomic write
-            temp_file = self.registry_file.with_suffix('.tmp')
-            with open(temp_file, 'w') as f:
-                json.dump(data, f, indent=2)
-            
-            temp_file.replace(self.registry_file)
-            self.logger.debug("App registry saved to disk")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to save app registry: {e}")
+        self.logger.info("Initialized in-memory app registry")
     
     def register_app(self, entry: AppRegistryEntry) -> bool:
         """Register a new application"""
         try:
             self.apps[entry.app_id] = entry
-            self._save_registry()
             self.logger.info(f"Registered app {entry.app_id} ({entry.name})")
             return True
         except Exception as e:
@@ -224,7 +175,6 @@ class AppRegistry:
                     setattr(entry, key, value)
             
             entry.last_updated = datetime.now()
-            self._save_registry()
             self.logger.debug(f"Updated app {app_id}")
             return True
         except Exception as e:
@@ -235,7 +185,6 @@ class AppRegistry:
         """Unregister an application"""
         if app_id in self.apps:
             del self.apps[app_id]
-            self._save_registry()
             self.logger.info(f"Unregistered app {app_id}")
             return True
         return False
@@ -408,14 +357,11 @@ class AppManager:
             self.logger.error(f"App {app_id} not found")
             return False
         
-        if not app.manifest.requirements:
-            self.logger.info(f"No requirements file specified for app {app_id}")
-            return True
-        
-        requirements_file = app.path / app.manifest.requirements
+        # Always use requirements.txt as default
+        requirements_file = app.path / "requirements.txt"
         if not requirements_file.exists():
-            self.logger.error(f"Requirements file not found: {requirements_file}")
-            return False
+            self.logger.info(f"No requirements.txt found for app {app_id}, skipping dependency installation")
+            return True
         
         try:
             self.registry.update_app(app_id, status=AppStatus.INSTALLING)

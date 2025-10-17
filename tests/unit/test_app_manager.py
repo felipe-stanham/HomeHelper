@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from homehelper.core.config import ConfigManager
 from homehelper.managers.app_manager import (
     AppManager, AppRegistry, AppRegistryEntry, AppManifest, 
-    AppType, AppStatus, AppEndpoints, AppRuntimeInfo
+    AppType, AppStatus, AppRuntimeInfo
 )
 from homehelper.managers.port_manager import PortManager
 
@@ -223,7 +223,7 @@ class TestAppRegistry:
     def test_registry_initialization(self, app_registry):
         """Test registry initialization"""
         assert len(app_registry.apps) == 0
-        assert app_registry.registry_dir.exists()
+        # Registry is now in-memory only, no persistence
     
     def test_register_app(self, app_registry, sample_entry):
         """Test app registration"""
@@ -321,8 +321,8 @@ class TestAppRegistry:
         assert len(ready_apps) == 0
         assert discovered_apps[0].app_id == sample_entry.app_id
     
-    def test_persistence_save_and_load(self, mock_config_manager, temp_config_dir, tmp_path):
-        """Test registry persistence"""
+    def test_in_memory_only_no_persistence(self, mock_config_manager, tmp_path):
+        """Test that registry is in-memory only (no persistence)"""
         # Create first registry and add app
         registry1 = AppRegistry(mock_config_manager)
         
@@ -337,13 +337,13 @@ class TestAppRegistry:
         )
         
         registry1.register_app(entry)
+        assert len(registry1.apps) == 1
         
-        # Create second registry (should load from disk)
+        # Create second registry (should be empty - no persistence)
         registry2 = AppRegistry(mock_config_manager)
         
-        assert len(registry2.apps) == 1
-        assert "test-1" in registry2.apps
-        assert registry2.apps["test-1"].name == "test-app"
+        assert len(registry2.apps) == 0  # Fresh start, no persistence
+        assert "test-1" not in registry2.apps
 
 
 class TestAppManager:
@@ -502,9 +502,9 @@ class TestAppManager:
         }
         
         (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
-        (app_dir / "main.py").write_text("# Main file")
+        (app_dir / "app.py").write_text("# Main file")
         (app_dir / "requirements.txt").write_text("requests==2.28.0")
-{{ ... }}
+        
         # Discover app
         app_manager.discover_apps()
         apps = app_manager.registry.get_all_apps()
@@ -538,7 +538,7 @@ class TestAppManager:
         }
         
         (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
-        (app_dir / "main.py").write_text("# Main file")
+        (app_dir / "app.py").write_text("# Main file")
         (app_dir / "requirements.txt").write_text("nonexistent-package==999.999.999")
         
         # Discover app
@@ -574,7 +574,7 @@ class TestAppManager:
         }
         
         (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
-        (app_dir / "main.py").write_text("# Main file")
+        (app_dir / "app.py").write_text("# Main file")
         
         # Discover app
         app_manager.discover_apps()

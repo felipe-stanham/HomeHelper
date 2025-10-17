@@ -41,6 +41,11 @@ async def lifespan(app: FastAPI):
     config_manager.get_data_dir().mkdir(parents=True, exist_ok=True)
     config_manager.get_logs_dir().mkdir(parents=True, exist_ok=True)
     
+    # Discover apps on startup
+    logger.info("Discovering applications...")
+    discovered_count = app_manager.discover_apps()
+    logger.info(f"Discovered {discovered_count} applications")
+    
     logger.info("HomeHelper main application started successfully")
     
     yield

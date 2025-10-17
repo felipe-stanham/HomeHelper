@@ -50,61 +50,11 @@ class PortManager:
         self.port_start = config.process_manager.port_range.start
         self.port_end = config.process_manager.port_range.end
         
-        # Port allocation tracking
+        # Port allocation tracking (in-memory only)
         self.allocations: Dict[int, PortAllocation] = {}
         self.app_ports: Dict[str, int] = {}  # app_id -> port mapping
         
-        # Persistence
-        self.registry_dir = Path(config_manager.get_data_dir()) / "registry"
-        self.registry_dir.mkdir(parents=True, exist_ok=True)
-        self.ports_file = self.registry_dir / "ports.json"
-        
-        # Load existing allocations
-        self._load_allocations()
-    
-    def _load_allocations(self) -> None:
-        """Load port allocations from disk"""
-        try:
-            if self.ports_file.exists():
-                with open(self.ports_file, 'r') as f:
-                    data = json.load(f)
-                
-                for port_str, allocation_data in data.get('allocations', {}).items():
-                    port = int(port_str)
-                    allocation = PortAllocation.from_dict(allocation_data)
-                    self.allocations[port] = allocation
-                    self.app_ports[allocation.app_id] = port
-                
-                self.logger.info(f"Loaded {len(self.allocations)} port allocations")
-            else:
-                self.logger.info("No existing port allocations found")
-                
-        except Exception as e:
-            self.logger.error(f"Failed to load port allocations: {e}")
-            self.allocations = {}
-            self.app_ports = {}
-    
-    def _save_allocations(self) -> None:
-        """Save port allocations to disk"""
-        try:
-            data = {
-                'allocations': {
-                    str(port): allocation.to_dict() 
-                    for port, allocation in self.allocations.items()
-                },
-                'last_updated': datetime.now().isoformat()
-            }
-            
-            # Atomic write
-            temp_file = self.ports_file.with_suffix('.tmp')
-            with open(temp_file, 'w') as f:
-                json.dump(data, f, indent=2)
-            
-            temp_file.replace(self.ports_file)
-            self.logger.debug("Port allocations saved to disk")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to save port allocations: {e}")
+        self.logger.info(f"Initialized port manager (range: {self.port_start}-{self.port_end})")
     
     def _is_port_available(self, port: int) -> bool:
         """Check if a port is available for binding"""
@@ -136,7 +86,6 @@ class PortManager:
             if self._is_port_available(existing_port):
                 allocation.status = 'allocated'
                 allocation.allocated_at = datetime.now()
-                self._save_allocations()
                 self.logger.info(f"Reusing existing port {existing_port} for app {app_id}")
                 return existing_port
             else:
@@ -168,7 +117,6 @@ class PortManager:
         
         self.allocations[port] = allocation
         self.app_ports[app_id] = port
-        self._save_allocations()
         
         self.logger.info(f"Allocated port {port} to {app_type} app {app_id}")
         return port
@@ -195,7 +143,6 @@ class PortManager:
         del self.app_ports[app_id]
         del self.allocations[port]
         
-        self._save_allocations()
         self.logger.info(f"Released port {port} from app {app_id}")
         return True
     
@@ -211,7 +158,6 @@ class PortManager:
         port = self.app_ports[app_id]
         if port in self.allocations:
             self.allocations[port].status = 'in_use'
-            self._save_allocations()
             self.logger.debug(f"Marked port {port} as in use for app {app_id}")
             return True
         

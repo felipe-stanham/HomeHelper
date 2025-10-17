@@ -218,6 +218,6 @@ Thumbs.db
 # HomeHelper specific
 # Ignore apps directory to allow user-provided sample applications
 apps/
-# Keep runtime data and logs local
+# Keep runtime data and logs local (no persistence needed)
 data/
 logs/
