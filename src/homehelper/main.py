@@ -33,13 +33,13 @@ def setup_logging():
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
+    # Ensure required directories exist BEFORE logging setup
+    config_manager.get_data_dir().mkdir(parents=True, exist_ok=True)
+    config_manager.get_logs_dir().mkdir(parents=True, exist_ok=True)
+    
     setup_logging()
     logger = logging.getLogger("homehelper.main")
     logger.info("Starting HomeHelper main application")
-    
-    # Ensure required directories exist
-    config_manager.get_data_dir().mkdir(parents=True, exist_ok=True)
-    config_manager.get_logs_dir().mkdir(parents=True, exist_ok=True)
     
     # Discover apps on startup
     logger.info("Discovering applications...")
