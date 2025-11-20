@@ -6,6 +6,7 @@
     <div class="text-end">
       <button id="hh-refresh-all" class="btn btn-outline-primary btn-sm">🔄 Refresh</button>
       <button onclick="viewHomeHelperLogs()" class="btn btn-outline-secondary btn-sm">📋 HomeHelper Logs</button>
+      <button onclick="restartHomeHelper()" class="btn btn-outline-warning btn-sm">🔄 Restart HomeHelper</button>
       <small class="text-muted d-block">Last Updated: <span id="hh-last-updated">--:--</span></small>
     </div>
   </div>
@@ -37,17 +38,30 @@
     </div>
   </section>
 
-  <!-- App Status Grid -->
+  <!-- Streamlit Apps Section -->
   <section class="mb-3">
     <div class="card hh-card">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span class="fw-semibold">App Status</span>
+        <span class="fw-semibold">Streamlit Apps</span>
         <button id="hh-refresh-apps" class="btn btn-sm btn-outline-secondary">Refresh Apps</button>
       </div>
       <div class="card-body">
-        <div id="hh-app-grid" class="row g-3">
-          <!-- App cards will be populated by JS -->
-          <div class="col-12 text-muted" id="hh-app-grid-empty">No apps loaded yet.</div>
+        <div id="hh-streamlit-grid" class="row g-3">
+          <!-- Streamlit app cards will be populated by JS -->
+          <div class="col-12 text-muted" id="hh-streamlit-grid-empty">No Streamlit apps found.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Service Apps Section -->
+  <section class="mb-3">
+    <div class="card hh-card">
+      <div class="card-header fw-semibold">Service Apps</div>
+      <div class="card-body">
+        <div id="hh-service-grid" class="row g-3">
+          <!-- Service app cards will be populated by JS -->
+          <div class="col-12 text-muted" id="hh-service-grid-empty">No service apps found.</div>
         </div>
       </div>
     </div>
@@ -212,22 +226,32 @@
   }
 
   function renderApps(apps) {
-    const grid = document.getElementById("hh-app-grid");
+    const streamlitGrid = document.getElementById("hh-streamlit-grid");
+    const serviceGrid = document.getElementById("hh-service-grid");
     
-    // Clear only app cards, not the empty message
-    const cards = grid.querySelectorAll('.col-12.col-md-6.col-lg-4');
-    cards.forEach(card => card.remove());
+    // Clear only app cards, not the empty messages
+    streamlitGrid.querySelectorAll('.col-12.col-md-6.col-lg-4').forEach(card => card.remove());
+    serviceGrid.querySelectorAll('.col-12.col-md-6.col-lg-4').forEach(card => card.remove());
 
-    const empty = document.getElementById("hh-app-grid-empty");
+    const streamlitEmpty = document.getElementById("hh-streamlit-grid-empty");
+    const serviceEmpty = document.getElementById("hh-service-grid-empty");
     
     if (!apps || apps.length === 0) {
-      if (empty) empty.style.display = "block";
+      if (streamlitEmpty) streamlitEmpty.style.display = "block";
+      if (serviceEmpty) serviceEmpty.style.display = "block";
       return;
     }
 
-    if (empty) empty.style.display = "none";
+    // Separate apps by type
+    const streamlitApps = apps.filter(app => app.type === 'streamlit');
+    const serviceApps = apps.filter(app => app.type === 'service');
 
-    for (const app of apps) {
+    // Show/hide empty messages
+    if (streamlitEmpty) streamlitEmpty.style.display = streamlitApps.length === 0 ? "block" : "none";
+    if (serviceEmpty) serviceEmpty.style.display = serviceApps.length === 0 ? "block" : "none";
+
+    // Render Streamlit apps
+    for (const app of streamlitApps) {
       const col = document.createElement("div");
       col.className = "col-12 col-md-6 col-lg-4";
 
@@ -243,13 +267,42 @@
             <p class="card-text small text-muted mb-2">${app.description || "No description"}</p>
             <p class="mb-2">Status: ${statusHtml}</p>
             <p class="mb-2"><small class="text-muted">Version: ${app.version}</small></p>
-            <div class="mt-auto d-flex gap-2">
+            <div class="mt-auto d-flex gap-2 flex-wrap">
+              <button class="btn btn-sm btn-primary" onclick="launchStreamlitApp('${app.app_id}', '${app.name}')">🚀 Launch</button>
               <button class="btn btn-sm btn-outline-secondary" onclick="viewAppLogs('${app.app_id}', '${app.name}')">View Logs</button>
               <button class="btn btn-sm btn-outline-primary" onclick="viewAppDetails('${app.app_id}')">Details</button>
             </div>
           </div>
         </div>`;
-      grid.appendChild(col);
+      streamlitGrid.appendChild(col);
+    }
+
+    // Render Service apps
+    for (const app of serviceApps) {
+      const col = document.createElement("div");
+      col.className = "col-12 col-md-6 col-lg-4";
+
+      const statusHtml = statusBadge(app.status);
+      const hasUI = app.manifest?.has_UI || false;
+
+      col.innerHTML = `
+        <div class="card h-100 hh-card">
+          <div class="card-body d-flex flex-column">
+            <h5 class="card-title d-flex justify-content-between align-items-center">
+              <span>${app.name}</span>
+              <small class="text-muted text-uppercase">${app.type}</small>
+            </h5>
+            <p class="card-text small text-muted mb-2">${app.description || "No description"}</p>
+            <p class="mb-2">Status: ${statusHtml}</p>
+            <p class="mb-2"><small class="text-muted">Version: ${app.version}</small></p>
+            <div class="mt-auto d-flex gap-2 flex-wrap">
+              ${hasUI ? `<button class="btn btn-sm btn-primary" onclick="viewServiceUI('${app.app_id}', '${app.name}')">🖥️ View UI</button>` : ''}
+              <button class="btn btn-sm btn-outline-secondary" onclick="viewAppLogs('${app.app_id}', '${app.name}')">View Logs</button>
+              <button class="btn btn-sm btn-outline-primary" onclick="viewAppDetails('${app.app_id}')">Details</button>
+            </div>
+          </div>
+        </div>`;
+      serviceGrid.appendChild(col);
     }
   }
 
@@ -320,9 +373,19 @@
     try {
       const app = await fetchJson(`/api/apps/${appId}`);
       
+      // Fetch process info for running time
+      let processInfo = null;
+      try {
+        const processResponse = await fetchJson(`/api/apps/${appId}/process/info`);
+        processInfo = processResponse.data;
+      } catch (err) {
+        console.log('No process info available:', err);
+      }
+      
       const statusBadgeHtml = statusBadge(app.status);
       const portInfo = app.runtime_info?.assigned_port ? `Port ${app.runtime_info.assigned_port}` : 'No port assigned';
       const serviceStatus = app.runtime_info?.service_status || 'Unknown';
+      const uptime = processInfo?.uptime || 'N/A';
       
       content.innerHTML = `
         <div class="row g-3">
@@ -354,6 +417,7 @@
                   <tr><td class="fw-semibold">Assigned Port:</td><td>${portInfo}</td></tr>
                   <tr><td class="fw-semibold">Service Status:</td><td>${serviceStatus}</td></tr>
                   <tr><td class="fw-semibold">Process ID:</td><td>${app.runtime_info?.process_id || 'N/A'}</td></tr>
+                  <tr><td class="fw-semibold">Running Time:</td><td>${uptime}</td></tr>
                   <tr><td class="fw-semibold">Service Name:</td><td>${app.runtime_info?.service_name || 'N/A'}</td></tr>
                 </table>
               </div>
@@ -459,12 +523,41 @@
     }
   }
   
+  async function restartHomeHelper() {
+    if (!confirm('Are you sure you want to restart HomeHelper? All apps will be restarted.')) {
+      return;
+    }
+    
+    try {
+      await fetch('/api/system/restart', { method: 'POST' });
+      alert('HomeHelper restart initiated. The page will reload in 5 seconds...');
+      setTimeout(() => {
+        window.location.reload();
+      }, 5000);
+    } catch (err) {
+      alert(`Failed to restart HomeHelper: ${err.message}`);
+    }
+  }
+  
   // Service control functions
   async function startApp(appId) {
     try {
-      await fetch(`/api/services/${appId}/start`, { method: 'POST' });
-      alert('Service start command sent');
-      await viewAppDetails(appId);
+      const response = await fetch(`/api/apps/${appId}/process/start`, { method: 'POST' });
+      const result = await response.json();
+      
+      if (response.ok) {
+        alert('Service started successfully');
+        // Close any open modals
+        const modals = document.querySelectorAll('.modal.show');
+        modals.forEach(modal => {
+          const bsModal = bootstrap.Modal.getInstance(modal);
+          if (bsModal) bsModal.hide();
+        });
+        // Refresh dashboard
+        await refreshDashboard();
+      } else {
+        alert(`Failed to start service: ${result.detail || 'Unknown error'}`);
+      }
     } catch (err) {
       alert(`Failed to start service: ${err.message}`);
     }
@@ -472,9 +565,22 @@
   
   async function stopApp(appId) {
     try {
-      await fetch(`/api/services/${appId}/stop`, { method: 'POST' });
-      alert('Service stop command sent');
-      await viewAppDetails(appId);
+      const response = await fetch(`/api/apps/${appId}/process/stop`, { method: 'POST' });
+      const result = await response.json();
+      
+      if (response.ok) {
+        alert('Service stopped successfully');
+        // Close any open modals
+        const modals = document.querySelectorAll('.modal.show');
+        modals.forEach(modal => {
+          const bsModal = bootstrap.Modal.getInstance(modal);
+          if (bsModal) bsModal.hide();
+        });
+        // Refresh dashboard
+        await refreshDashboard();
+      } else {
+        alert(`Failed to stop service: ${result.detail || 'Unknown error'}`);
+      }
     } catch (err) {
       alert(`Failed to stop service: ${err.message}`);
     }
@@ -482,9 +588,22 @@
   
   async function restartApp(appId) {
     try {
-      await fetch(`/api/services/${appId}/restart`, { method: 'POST' });
-      alert('Service restart command sent');
-      await viewAppDetails(appId);
+      const response = await fetch(`/api/apps/${appId}/process/restart`, { method: 'POST' });
+      const result = await response.json();
+      
+      if (response.ok) {
+        alert('Service restarted successfully');
+        // Close any open modals
+        const modals = document.querySelectorAll('.modal.show');
+        modals.forEach(modal => {
+          const bsModal = bootstrap.Modal.getInstance(modal);
+          if (bsModal) bsModal.hide();
+        });
+        // Refresh dashboard
+        await refreshDashboard();
+      } else {
+        alert(`Failed to restart service: ${result.detail || 'Unknown error'}`);
+      }
     } catch (err) {
       alert(`Failed to restart service: ${err.message}`);
     }
@@ -518,6 +637,9 @@
       }
       
       const result = await response.json();
+      
+      // Refresh dashboard to show updated status
+      await refreshDashboard();
       
       // Load Streamlit in iframe
       frameEl.src = result.url;

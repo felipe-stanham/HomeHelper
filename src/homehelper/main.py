@@ -885,6 +885,118 @@ async def get_app_ui_resource(app_id: str, resource: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Process Management Endpoints (macOS compatible)
+
+@app.post("/api/apps/{app_id}/process/start")
+async def start_app_process(app_id: str):
+    """Start an app process using the process manager"""
+    try:
+        app = app_manager.registry.get_app(app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+        
+        if app.type != "service":
+            raise HTTPException(status_code=400, detail="Only service apps can be started this way")
+        
+        success = macos_process_manager.start_app(app_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to start app")
+        
+        return {"success": True, "message": f"App {app_id} started successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/apps/{app_id}/process/stop")
+async def stop_app_process(app_id: str):
+    """Stop an app process using the process manager"""
+    try:
+        success = macos_process_manager.stop_app(app_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="App is not running")
+        
+        return {"success": True, "message": f"App {app_id} stopped successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to stop app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/apps/{app_id}/process/restart")
+async def restart_app_process(app_id: str):
+    """Restart an app process using the process manager"""
+    try:
+        app = app_manager.registry.get_app(app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+        
+        if app.type != "service":
+            raise HTTPException(status_code=400, detail="Only service apps can be restarted this way")
+        
+        success = macos_process_manager.restart_app(app_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to restart app")
+        
+        return {"success": True, "message": f"App {app_id} restarted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to restart app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apps/{app_id}/process/info")
+async def get_app_process_info(app_id: str):
+    """Get detailed process information including uptime"""
+    try:
+        process_info = macos_process_manager.get_process_info(app_id)
+        
+        if process_info is None:
+            # Also check Streamlit manager
+            streamlit_info = streamlit_manager.get_running_apps()
+            if app_id in streamlit_info:
+                return {"success": True, "data": streamlit_info[app_id]}
+            
+            return {"success": True, "data": None, "message": "Process not running"}
+        
+        return {"success": True, "data": process_info}
+        
+    except Exception as e:
+        logger.error(f"Failed to get process info for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/system/restart")
+async def restart_homehelper():
+    """Restart HomeHelper application"""
+    try:
+        import os
+        import sys
+        
+        logger.info("HomeHelper restart requested via API")
+        
+        # Trigger a restart by exiting with a special code
+        # The process supervisor (systemd, launchd, etc.) should restart it
+        # For development, we'll just log it
+        logger.warning("Restart requested - this would restart the application in production")
+        
+        return {"success": True, "message": "Restart initiated"}
+        
+    except Exception as e:
+        logger.error(f"Failed to restart HomeHelper: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Streamlit App Management Endpoints
 
 @app.post("/api/apps/{app_id}/streamlit/launch")

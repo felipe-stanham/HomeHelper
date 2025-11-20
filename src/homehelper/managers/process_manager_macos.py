@@ -183,6 +183,34 @@ class MacOSProcessManager:
             self.port_manager.release_port(app_id)
             return "error"
     
+    def get_process_info(self, app_id: str) -> Optional[dict]:
+        """Get detailed process information including start time"""
+        if app_id not in self.processes:
+            return None
+        
+        process_info = self.processes[app_id].copy()
+        
+        # Calculate uptime if process is running
+        if 'started_at' in process_info:
+            uptime_seconds = (datetime.now() - process_info['started_at']).total_seconds()
+            process_info['uptime_seconds'] = int(uptime_seconds)
+            
+            # Format uptime as human-readable string
+            hours, remainder = divmod(int(uptime_seconds), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            
+            if hours > 0:
+                process_info['uptime'] = f"{hours}h {minutes}m {seconds}s"
+            elif minutes > 0:
+                process_info['uptime'] = f"{minutes}m {seconds}s"
+            else:
+                process_info['uptime'] = f"{seconds}s"
+            
+            # Convert datetime to ISO string for JSON serialization
+            process_info['started_at'] = process_info['started_at'].isoformat()
+        
+        return process_info
+    
     def restart_app(self, app_id: str) -> bool:
         """Restart a service app"""
         self.logger.info(f"Restarting app {app_id}")

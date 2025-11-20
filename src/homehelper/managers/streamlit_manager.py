@@ -130,6 +130,13 @@ class StreamlitManager:
                 app.runtime_info.process_id = str(process.pid)
                 app.runtime_info.started_at = datetime.now()
                 
+                # Update app status to running
+                self.app_manager.registry.update_app(
+                    app_id,
+                    status='running',
+                    runtime_info=app.runtime_info
+                )
+                
                 self.logger.info(f"Launched Streamlit app {app_id} (PID: {process.pid}, Port: {port})")
                 
                 # Give Streamlit a moment to start
@@ -139,7 +146,7 @@ class StreamlitManager:
                     'url': f"http://localhost:{port}",
                     'port': port,
                     'pid': process.pid,
-                    'status': 'starting'
+                    'status': 'running'
                 }
                 
             except Exception as e:
@@ -185,6 +192,13 @@ class StreamlitManager:
             if app:
                 app.runtime_info.process_id = None
                 app.runtime_info.assigned_port = None
+                
+                # Update app status to discovered (not running)
+                self.app_manager.registry.update_app(
+                    app_id,
+                    status='discovered',
+                    runtime_info=app.runtime_info
+                )
             
             # Remove from tracking
             del self.processes[app_id]
