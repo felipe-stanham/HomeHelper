@@ -213,15 +213,19 @@
 
   function renderApps(apps) {
     const grid = document.getElementById("hh-app-grid");
-    const empty = document.getElementById("hh-app-grid-empty");
-    grid.innerHTML = "";
+    
+    // Clear only app cards, not the empty message
+    const cards = grid.querySelectorAll('.col-12.col-md-6.col-lg-4');
+    cards.forEach(card => card.remove());
 
+    const empty = document.getElementById("hh-app-grid-empty");
+    
     if (!apps || apps.length === 0) {
-      empty.style.display = "block";
+      if (empty) empty.style.display = "block";
       return;
     }
 
-    empty.style.display = "none";
+    if (empty) empty.style.display = "none";
 
     for (const app of apps) {
       const col = document.createElement("div");

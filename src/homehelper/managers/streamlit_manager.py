@@ -92,9 +92,9 @@ class StreamlitManager:
                     self.port_manager.release_port(app_id)
                     return None
                 
-                # Streamlit command
+                # Streamlit command (use python3 -m streamlit for better compatibility)
                 cmd = [
-                    "streamlit", "run",
+                    "python3", "-m", "streamlit", "run",
                     str(main_file),
                     "--server.port", str(port),
                     "--server.headless", "true",
