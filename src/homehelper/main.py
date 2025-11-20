@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from homehelper.core.config import config_manager
 from homehelper.core.redis_client import RedisHealthMonitor
+from homehelper.core.event_subscriber import RedisEventSubscriber
 from homehelper.utils.system_monitor import SystemMonitor
 from homehelper.web.dashboard import router as dashboard_router
 
@@ -82,12 +83,18 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Failed to start {app_entry.name}")
     logger.info(f"Auto-started {auto_start_count} service apps")
     
+    # Start Redis event subscriber
+    logger.info("Starting Redis event subscriber...")
+    event_subscriber.start()
+    
     logger.info("HomeHelper main application started successfully")
     
     yield
     
     # Shutdown
     logger.info("Shutting down HomeHelper main application")
+    logger.info("Stopping Redis event subscriber...")
+    event_subscriber.stop()
     logger.info("Stopping all managed service apps...")
     macos_process_manager.stop_all()
     logger.info("Stopping all Streamlit apps...")
@@ -98,6 +105,7 @@ async def lifespan(app: FastAPI):
 # Initialize components at module level for testing
 system_monitor = SystemMonitor()
 redis_monitor = RedisHealthMonitor(config_manager.get_redis_url())
+event_subscriber = RedisEventSubscriber(config_manager.get_redis_url(), max_events=100)
 
 # Initialize app management components
 from .managers import AppManager, PortManager, ServiceManager
@@ -594,7 +602,7 @@ async def get_homehelper_logs(lines: int = 100):
 
 @app.get("/api/activity/recent")
 async def get_recent_activity(limit: int = 10):
-    """Get recent Redis messages (unfiltered)"""
+    """Get recent Redis pub/sub events"""
     try:
         import redis
         import json
@@ -605,34 +613,48 @@ async def get_recent_activity(limit: int = 10):
         
         activities = []
         
-        # Get all messages from the messages list
-        messages_key = "messages"
+        # Get events from the recent events list (stored by background subscriber)
+        events_key = "homehelper:events:recent"
         
-        # Get the latest messages (Redis lists are ordered, newest at the end)
-        # Use negative indices to get the most recent
-        total_messages = redis_client.llen(messages_key)
+        # Get the latest events
+        total_events = redis_client.llen(events_key)
         
-        if total_messages > 0:
-            # Get the last N messages
-            start_index = max(0, total_messages - limit)
-            messages = redis_client.lrange(messages_key, start_index, -1)
+        if total_events > 0:
+            # Get the last N events (newest at the end of the list)
+            start_index = max(0, total_events - limit)
+            events = redis_client.lrange(events_key, start_index, -1)
             
             # Reverse to show newest first
-            messages.reverse()
+            events.reverse()
             
-            for msg in messages:
+            for event in events:
                 try:
-                    msg_data = json.loads(msg)
+                    event_data = json.loads(event)
                     
-                    # Format as activity item
+                    # Format timestamp
+                    timestamp_val = event_data.get('timestamp', '')
+                    if isinstance(timestamp_val, (int, float)):
+                        timestamp_str = datetime.fromtimestamp(timestamp_val).strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        timestamp_str = str(timestamp_val)
+                    
+                    # Extract message from event data
+                    message = ''
+                    if 'data' in event_data and 'content' in event_data['data']:
+                        message = event_data['data']['content']
+                    elif 'event_type' in event_data:
+                        message = f"Event: {event_data['event_type']}"
+                    else:
+                        message = json.dumps(event_data.get('data', {}))
+                    
                     activities.append({
-                        'timestamp': msg_data.get('timestamp', ''),
-                        'message': msg_data.get('message', ''),
-                        'sender': msg_data.get('sender', 'unknown'),
-                        'data': msg_data
+                        'timestamp': timestamp_str,
+                        'message': message,
+                        'sender': event_data.get('source', 'unknown'),
+                        'data': event_data
                     })
                 except Exception as e:
-                    logger.warning(f"Failed to parse Redis message: {e}")
+                    logger.warning(f"Failed to parse Redis event: {e}")
                     continue
         
         return {"success": True, "data": {"activities": activities, "count": len(activities)}}
