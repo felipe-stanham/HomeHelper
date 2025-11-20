@@ -4,6 +4,10 @@
     "port": 6379,
     "db": 0
   },
+  "event_subscriber": {
+    "max_events": 100,
+    "channels": ["homehelper:events:*"]
+  },
   "logging": {
     "level": "INFO",
     "format": "%(asctime)s - %(levelname)s - [%(name)s] - %(message)s"

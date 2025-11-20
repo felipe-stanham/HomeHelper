@@ -15,6 +15,11 @@ class RedisConfig(BaseModel):
     db: int = 0
 
 
+class EventSubscriberConfig(BaseModel):
+    max_events: int = 100
+    channels: list[str] = ["homehelper:events:*"]
+
+
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     format: str = "%(asctime)s - %(levelname)s - [%(name)s] - %(message)s"
@@ -40,6 +45,7 @@ class SystemConfig(BaseModel):
 
 class HomeHelperConfig(BaseSettings):
     redis: RedisConfig = Field(default_factory=RedisConfig)
+    event_subscriber: EventSubscriberConfig = Field(default_factory=EventSubscriberConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     process_manager: ProcessManagerConfig = Field(default_factory=ProcessManagerConfig)
     health_check_interval_seconds: int = 60

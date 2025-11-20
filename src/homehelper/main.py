@@ -105,7 +105,10 @@ async def lifespan(app: FastAPI):
 # Initialize components at module level for testing
 system_monitor = SystemMonitor()
 redis_monitor = RedisHealthMonitor(config_manager.get_redis_url())
-event_subscriber = RedisEventSubscriber(config_manager.get_redis_url(), max_events=100)
+event_subscriber = RedisEventSubscriber(
+    config_manager.get_redis_url(), 
+    max_events=config_manager.config.event_subscriber.max_events
+)
 
 # Initialize app management components
 from .managers import AppManager, PortManager, ServiceManager
