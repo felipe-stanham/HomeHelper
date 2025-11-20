@@ -5,6 +5,7 @@
     <h1 class="h3 mb-0">HomeHelper Dashboard</h1>
     <div class="text-end">
       <button id="hh-refresh-all" class="btn btn-outline-primary btn-sm">🔄 Refresh</button>
+      <button onclick="viewHomeHelperLogs()" class="btn btn-outline-secondary btn-sm">📋 HomeHelper Logs</button>
       <small class="text-muted d-block">Last Updated: <span id="hh-last-updated">--:--</span></small>
     </div>
   </div>
@@ -58,8 +59,7 @@
       <div class="card-header fw-semibold">Recent Activity</div>
       <div class="card-body">
         <div id="hh-recent-activity" class="text-muted">
-          <!-- Placeholder for future Redis/log-backed activity list -->
-          <p class="mb-0">Recent activity will appear here in a future scope.</p>
+          <p class="mb-0">Loading recent activity...</p>
         </div>
       </div>
     </div>
@@ -253,14 +253,42 @@
     }
   }
 
+  function renderRecentActivity(activities) {
+    const container = document.getElementById("hh-recent-activity");
+    
+    if (!activities || activities.length === 0) {
+      container.innerHTML = '<p class="mb-0 text-muted">No recent activity</p>';
+      return;
+    }
+    
+    let html = '<ul class="list-unstyled mb-0">';
+    activities.forEach(activity => {
+      const levelClass = activity.level === 'ERROR' ? 'text-danger' : 
+                        activity.level === 'WARNING' ? 'text-warning' : 'text-muted';
+      const timestamp = activity.timestamp || '';
+      const message = activity.message || activity.event || 'Unknown activity';
+      
+      html += `
+        <li class="mb-2 pb-2 border-bottom">
+          <small class="${levelClass}">${timestamp}</small>
+          <div class="small">${message}</div>
+        </li>`;
+    });
+    html += '</ul>';
+    
+    container.innerHTML = html;
+  }
+
   async function refreshDashboard() {
     try {
-      const [health, appList] = await Promise.all([
+      const [health, appList, activity] = await Promise.all([
         fetchJson("/health"),
         fetchJson("/api/apps"),
+        fetchJson("/api/activity/recent?limit=10"),
       ]);
       renderSystemStatus(health);
       renderApps(appList.apps || []);
+      renderRecentActivity(activity.data?.activities || []);
       setLastUpdated();
     } catch (err) {
       console.error("Failed to refresh dashboard", err);
@@ -389,11 +417,39 @@
     logContent.innerHTML = '<code>Loading logs...</code>';
     
     try {
-      const response = await fetchJson(`/api/services/${currentLogAppId}/logs?lines=50`);
+      const response = await fetchJson(`/api/apps/${currentLogAppId}/logs?lines=100`);
       const logs = response.data?.logs || [];
       
       if (logs.length === 0) {
-        logContent.innerHTML = '<code class="text-muted">No logs available</code>';
+        const message = response.data?.message || 'No logs available';
+        logContent.innerHTML = `<code class="text-muted">${message}</code>`;
+      } else {
+        logContent.innerHTML = `<code>${logs.join('\n')}</code>`;
+        document.getElementById('logLineCount').textContent = logs.length;
+      }
+    } catch (err) {
+      logContent.innerHTML = `<code class="text-danger">Failed to load logs: ${err.message}</code>`;
+    }
+  }
+  
+  async function viewHomeHelperLogs() {
+    currentLogAppId = null;  // Clear app-specific log ID
+    currentLogAppName = 'HomeHelper';
+    
+    const modal = new bootstrap.Modal(document.getElementById('logViewerModal'));
+    document.getElementById('logViewerModalLabel').textContent = 'HomeHelper - Main Application Logs';
+    modal.show();
+    
+    const logContent = document.getElementById('logContent');
+    logContent.innerHTML = '<code>Loading logs...</code>';
+    
+    try {
+      const response = await fetchJson('/api/logs/homehelper?lines=100');
+      const logs = response.data?.logs || [];
+      
+      if (logs.length === 0) {
+        const message = response.data?.message || 'No logs available';
+        logContent.innerHTML = `<code class="text-muted">${message}</code>`;
       } else {
         logContent.innerHTML = `<code>${logs.join('\n')}</code>`;
         document.getElementById('logLineCount').textContent = logs.length;

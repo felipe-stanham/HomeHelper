@@ -512,13 +512,147 @@ async def get_service_status(app_id: str):
 
 @app.get("/api/services/{app_id}/logs")
 async def get_service_logs(app_id: str, lines: int = 50):
-    """Get recent service logs for an app"""
+    """Get recent service logs for an app (systemd-based)"""
     try:
         logs = service_manager.get_service_logs(app_id, lines)
         return {"success": True, "data": {"logs": logs, "lines": len(logs)}}
     except Exception as e:
         logger.error(f"Failed to get service logs for app {app_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apps/{app_id}/logs")
+async def get_app_logs(app_id: str, lines: int = 100):
+    """Get recent logs for an app from log files (cross-platform)"""
+    try:
+        from pathlib import Path
+        
+        # Check for app-specific log file
+        logs_dir = config_manager.get_logs_dir()
+        
+        # Try different log file patterns
+        log_files = [
+            logs_dir / f"{app_id}.log",
+            logs_dir / f"{app_id}-streamlit.log",
+            logs_dir / f"homehelper-{app_id}.log"
+        ]
+        
+        log_lines = []
+        for log_file in log_files:
+            if log_file.exists():
+                try:
+                    with open(log_file, 'r') as f:
+                        all_lines = f.readlines()
+                        # Get last N lines
+                        log_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                        # Strip newlines
+                        log_lines = [line.rstrip('\n') for line in log_lines]
+                        break
+                except Exception as e:
+                    logger.error(f"Failed to read log file {log_file}: {e}")
+        
+        if not log_lines:
+            # No log file found, return empty
+            return {"success": True, "data": {"logs": [], "lines": 0, "message": "No log file found"}}
+        
+        return {"success": True, "data": {"logs": log_lines, "lines": len(log_lines)}}
+        
+    except Exception as e:
+        logger.error(f"Failed to get logs for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/homehelper")
+async def get_homehelper_logs(lines: int = 100):
+    """Get recent HomeHelper main application logs"""
+    try:
+        from pathlib import Path
+        
+        log_file = config_manager.get_logs_dir() / "homehelper-main.log"
+        
+        if not log_file.exists():
+            return {"success": True, "data": {"logs": [], "lines": 0, "message": "Log file not found"}}
+        
+        try:
+            with open(log_file, 'r') as f:
+                all_lines = f.readlines()
+                # Get last N lines
+                log_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                # Strip newlines
+                log_lines = [line.rstrip('\n') for line in log_lines]
+            
+            return {"success": True, "data": {"logs": log_lines, "lines": len(log_lines)}}
+            
+        except Exception as e:
+            logger.error(f"Failed to read HomeHelper log file: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+        
+    except Exception as e:
+        logger.error(f"Failed to get HomeHelper logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/activity/recent")
+async def get_recent_activity(limit: int = 10):
+    """Get recent activity from Redis (published messages)"""
+    try:
+        import redis
+        import json
+        from datetime import datetime
+        
+        # Connect to Redis
+        redis_client = redis.from_url(config_manager.get_redis_url())
+        
+        # Get recent messages from a list (if apps are publishing to one)
+        # For now, return activity from logs as a fallback
+        activities = []
+        
+        # Try to get from Redis list (if it exists)
+        try:
+            # Check if there's a recent events list
+            events_key = "homehelper:events:recent"
+            events = redis_client.lrange(events_key, 0, limit - 1)
+            
+            for event in events:
+                try:
+                    event_data = json.loads(event)
+                    activities.append(event_data)
+                except:
+                    pass
+        except:
+            pass
+        
+        # If no Redis events, parse from logs
+        if not activities:
+            log_file = config_manager.get_logs_dir() / "homehelper-main.log"
+            if log_file.exists():
+                with open(log_file, 'r') as f:
+                    lines = f.readlines()[-50:]  # Last 50 lines
+                    
+                    for line in lines:
+                        # Parse log lines for interesting events
+                        if any(keyword in line for keyword in ['Started', 'Stopped', 'Auto-starting', 'Successfully', 'Failed']):
+                            # Extract timestamp and message
+                            parts = line.split(' - ', 2)
+                            if len(parts) >= 3:
+                                timestamp = parts[0]
+                                level = parts[1]
+                                message = parts[2].strip()
+                                
+                                activities.append({
+                                    'timestamp': timestamp,
+                                    'level': level,
+                                    'message': message
+                                })
+                    
+                    # Limit to most recent
+                    activities = activities[-limit:]
+        
+        return {"success": True, "data": {"activities": activities, "count": len(activities)}}
+        
+    except Exception as e:
+        logger.error(f"Failed to get recent activity: {e}")
+        return {"success": True, "data": {"activities": [], "count": 0, "error": str(e)}}
 
 
 @app.post("/api/services/{app_id}/enable")
