@@ -90,6 +90,8 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down HomeHelper main application")
     logger.info("Stopping all managed service apps...")
     macos_process_manager.stop_all()
+    logger.info("Stopping all Streamlit apps...")
+    streamlit_manager.stop_all()
     logger.info("Shutdown complete")
 
 
@@ -101,12 +103,14 @@ redis_monitor = RedisHealthMonitor(config_manager.get_redis_url())
 from .managers import AppManager, PortManager, ServiceManager
 from .managers.health_monitor import HealthMonitor
 from .managers.process_manager_macos import MacOSProcessManager
+from .managers.streamlit_manager import StreamlitManager
 
 port_manager = PortManager(config_manager)
 app_manager = AppManager(config_manager, port_manager)
 service_manager = ServiceManager(config_manager, app_manager)
 health_monitor = HealthMonitor(config_manager, app_manager, service_manager)
 macos_process_manager = MacOSProcessManager(config_manager, app_manager, port_manager)
+streamlit_manager = StreamlitManager(config_manager, app_manager, port_manager)
 
 
 # Create FastAPI app
@@ -744,6 +748,72 @@ async def get_app_ui_resource(app_id: str, resource: str):
         raise
     except Exception as e:
         logger.error(f"Failed to fetch UI resource {resource} for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Streamlit App Management Endpoints
+
+@app.post("/api/apps/{app_id}/streamlit/launch")
+async def launch_streamlit_app(app_id: str):
+    """Launch a Streamlit app (or return existing instance)"""
+    try:
+        app = app_manager.registry.get_app(app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+        
+        if app.type != "streamlit":
+            raise HTTPException(status_code=400, detail="App is not a Streamlit app")
+        
+        result = streamlit_manager.launch_streamlit_app(app_id)
+        
+        if result is None:
+            raise HTTPException(status_code=500, detail="Failed to launch Streamlit app")
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to launch Streamlit app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/apps/{app_id}/streamlit/stop")
+async def stop_streamlit_app(app_id: str):
+    """Stop a running Streamlit app"""
+    try:
+        success = streamlit_manager.stop_streamlit_app(app_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Streamlit app is not running")
+        
+        return {"message": f"Streamlit app {app_id} stopped successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to stop Streamlit app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/apps/{app_id}/streamlit/touch")
+async def touch_streamlit_app(app_id: str):
+    """Update last accessed time for a Streamlit app (extends TTL)"""
+    try:
+        streamlit_manager.touch_app(app_id)
+        return {"message": "TTL extended"}
+    except Exception as e:
+        logger.error(f"Failed to touch Streamlit app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/streamlit/running")
+async def get_running_streamlit_apps():
+    """Get list of currently running Streamlit apps"""
+    try:
+        return streamlit_manager.get_running_apps()
+    except Exception as e:
+        logger.error(f"Failed to get running Streamlit apps: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

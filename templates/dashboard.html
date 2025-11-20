@@ -118,6 +118,25 @@
       </div>
     </div>
   </div>
+
+  <!-- Streamlit App Modal -->
+  <div class="modal fade" id="streamlitModal" tabindex="-1" aria-labelledby="streamlitModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-fullscreen">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="streamlitModalLabel">Streamlit App</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-0">
+          <div id="streamlitLoading" class="text-center p-5">
+            <div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>
+            <p class="mt-3">Launching Streamlit app...</p>
+          </div>
+          <iframe id="streamlitFrame" style="width: 100%; height: calc(100vh - 60px); border: none; display: none;"></iframe>
+        </div>
+      </div>
+    </div>
+  </div>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -325,6 +344,9 @@
           
           <div class="col-12 text-end">
             <button class="btn btn-outline-secondary" onclick="viewAppLogs('${app.app_id}', '${app.name}')">View Logs</button>
+            ${app.type === 'streamlit' ? `
+              <button class="btn btn-primary" onclick="launchStreamlitApp('${app.app_id}', '${app.name}')">🚀 Launch Streamlit</button>
+            ` : ''}
             ${app.type === 'service' && app.manifest?.config?.has_UI ? `
               <button class="btn btn-outline-primary" onclick="viewServiceUI('${app.app_id}', '${app.name}')">🖥️ View UI</button>
             ` : ''}
@@ -407,6 +429,65 @@
       alert(`Failed to restart service: ${err.message}`);
     }
   }
+
+  // Streamlit app launcher
+  let currentStreamlitAppId = null;
+  let streamlitTouchInterval = null;
+  
+  async function launchStreamlitApp(appId, appName) {
+    currentStreamlitAppId = appId;
+    
+    const modal = new bootstrap.Modal(document.getElementById('streamlitModal'));
+    document.getElementById('streamlitModalLabel').textContent = appName;
+    
+    const loadingEl = document.getElementById('streamlitLoading');
+    const frameEl = document.getElementById('streamlitFrame');
+    
+    loadingEl.style.display = 'block';
+    frameEl.style.display = 'none';
+    frameEl.src = '';
+    
+    modal.show();
+    
+    try {
+      // Launch Streamlit app
+      const response = await fetch(`/api/apps/${appId}/streamlit/launch`, { method: 'POST' });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to launch: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      
+      // Load Streamlit in iframe
+      frameEl.src = result.url;
+      
+      // Wait for iframe to load
+      frameEl.onload = () => {
+        loadingEl.style.display = 'none';
+        frameEl.style.display = 'block';
+      };
+      
+      // Set up TTL touch interval (every 60 seconds)
+      if (streamlitTouchInterval) {
+        clearInterval(streamlitTouchInterval);
+      }
+      streamlitTouchInterval = setInterval(() => {
+        fetch(`/api/apps/${appId}/streamlit/touch`, { method: 'POST' });
+      }, 60000);
+      
+    } catch (err) {
+      loadingEl.innerHTML = `<div class="alert alert-danger m-3">Failed to launch Streamlit app: ${err.message}</div>`;
+    }
+  }
+  
+  // Clean up Streamlit touch interval when modal closes
+  document.getElementById('streamlitModal').addEventListener('hidden.bs.modal', () => {
+    if (streamlitTouchInterval) {
+      clearInterval(streamlitTouchInterval);
+      streamlitTouchInterval = null;
+    }
+  });
 
   // Service UI viewer
   let currentServiceUIAppId = null;
