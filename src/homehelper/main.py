@@ -594,7 +594,7 @@ async def get_homehelper_logs(lines: int = 100):
 
 @app.get("/api/activity/recent")
 async def get_recent_activity(limit: int = 10):
-    """Get recent activity from Redis (published messages)"""
+    """Get recent Redis messages (unfiltered)"""
     try:
         import redis
         import json
@@ -603,50 +603,37 @@ async def get_recent_activity(limit: int = 10):
         # Connect to Redis
         redis_client = redis.from_url(config_manager.get_redis_url())
         
-        # Get recent messages from a list (if apps are publishing to one)
-        # For now, return activity from logs as a fallback
         activities = []
         
-        # Try to get from Redis list (if it exists)
-        try:
-            # Check if there's a recent events list
-            events_key = "homehelper:events:recent"
-            events = redis_client.lrange(events_key, 0, limit - 1)
-            
-            for event in events:
-                try:
-                    event_data = json.loads(event)
-                    activities.append(event_data)
-                except:
-                    pass
-        except:
-            pass
+        # Get all messages from the messages list
+        messages_key = "messages"
         
-        # If no Redis events, parse from logs
-        if not activities:
-            log_file = config_manager.get_logs_dir() / "homehelper-main.log"
-            if log_file.exists():
-                with open(log_file, 'r') as f:
-                    lines = f.readlines()[-50:]  # Last 50 lines
+        # Get the latest messages (Redis lists are ordered, newest at the end)
+        # Use negative indices to get the most recent
+        total_messages = redis_client.llen(messages_key)
+        
+        if total_messages > 0:
+            # Get the last N messages
+            start_index = max(0, total_messages - limit)
+            messages = redis_client.lrange(messages_key, start_index, -1)
+            
+            # Reverse to show newest first
+            messages.reverse()
+            
+            for msg in messages:
+                try:
+                    msg_data = json.loads(msg)
                     
-                    for line in lines:
-                        # Parse log lines for interesting events
-                        if any(keyword in line for keyword in ['Started', 'Stopped', 'Auto-starting', 'Successfully', 'Failed']):
-                            # Extract timestamp and message
-                            parts = line.split(' - ', 2)
-                            if len(parts) >= 3:
-                                timestamp = parts[0]
-                                level = parts[1]
-                                message = parts[2].strip()
-                                
-                                activities.append({
-                                    'timestamp': timestamp,
-                                    'level': level,
-                                    'message': message
-                                })
-                    
-                    # Limit to most recent
-                    activities = activities[-limit:]
+                    # Format as activity item
+                    activities.append({
+                        'timestamp': msg_data.get('timestamp', ''),
+                        'message': msg_data.get('message', ''),
+                        'sender': msg_data.get('sender', 'unknown'),
+                        'data': msg_data
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to parse Redis message: {e}")
+                    continue
         
         return {"success": True, "data": {"activities": activities, "count": len(activities)}}
         
