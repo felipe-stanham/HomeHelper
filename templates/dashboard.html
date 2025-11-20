@@ -1,0 +1,391 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h3 mb-0">HomeHelper Dashboard</h1>
+    <div class="text-end">
+      <button id="hh-refresh-all" class="btn btn-outline-primary btn-sm">🔄 Refresh</button>
+      <small class="text-muted d-block">Last Updated: <span id="hh-last-updated">--:--</span></small>
+    </div>
+  </div>
+
+  <!-- System Status -->
+  <section class="mb-3">
+    <div class="card hh-card">
+      <div class="card-header fw-semibold">System Status</div>
+      <div class="card-body" id="hh-system-status">
+        <div class="row g-3">
+          <div class="col-md-3 col-6">
+            <div class="fw-semibold">Redis Message Bus</div>
+            <div id="hh-redis-status" class="hh-status-badge text-muted">Loading...</div>
+          </div>
+          <div class="col-md-3 col-6">
+            <div class="fw-semibold">Memory</div>
+            <div id="hh-memory-status" class="text-muted">--</div>
+          </div>
+          <div class="col-md-3 col-6">
+            <div class="fw-semibold">Disk</div>
+            <div id="hh-disk-status" class="text-muted">--</div>
+          </div>
+          <div class="col-md-3 col-6">
+            <div class="fw-semibold">CPU / Temp</div>
+            <div id="hh-cpu-temp-status" class="text-muted">--</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- App Status Grid -->
+  <section class="mb-3">
+    <div class="card hh-card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">App Status</span>
+        <button id="hh-refresh-apps" class="btn btn-sm btn-outline-secondary">Refresh Apps</button>
+      </div>
+      <div class="card-body">
+        <div id="hh-app-grid" class="row g-3">
+          <!-- App cards will be populated by JS -->
+          <div class="col-12 text-muted" id="hh-app-grid-empty">No apps loaded yet.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Recent Activity / Logs -->
+  <section>
+    <div class="card hh-card">
+      <div class="card-header fw-semibold">Recent Activity</div>
+      <div class="card-body">
+        <div id="hh-recent-activity" class="text-muted">
+          <!-- Placeholder for future Redis/log-backed activity list -->
+          <p class="mb-0">Recent activity will appear here in a future scope.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- App Details Modal -->
+  <div class="modal fade" id="appDetailsModal" tabindex="-1" aria-labelledby="appDetailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="appDetailsModalLabel">App Details</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body" id="appDetailsContent">
+          <div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log Viewer Modal -->
+  <div class="modal fade" id="logViewerModal" tabindex="-1" aria-labelledby="logViewerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="logViewerModalLabel">Application Logs</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <button class="btn btn-sm btn-outline-primary" onclick="refreshLogs()">🔄 Refresh</button>
+            <span class="text-muted ms-2">Showing last <span id="logLineCount">50</span> lines</span>
+          </div>
+          <pre id="logContent" class="bg-dark text-light p-3 rounded" style="max-height: 500px; overflow-y: auto; font-size: 0.85rem;"><code>Loading logs...</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  async function fetchJson(url) {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      throw new Error(`Request failed: ${resp.status}`);
+    }
+    return await resp.json();
+  }
+
+  function formatTime(date) {
+    return date.toTimeString().slice(0, 5);
+  }
+
+  function setLastUpdated() {
+    document.getElementById("hh-last-updated").textContent = formatTime(new Date());
+  }
+
+  function renderSystemStatus(health) {
+    const extra = health.extra_info || {};
+    const hardware = extra.hardware || {};
+    const redis = extra.redis || {};
+
+    const cpuUsage = hardware.cpu?.usage_percent ?? "--";
+    const temp = hardware.cpu?.temperature_c ?? "--";
+    const memUsed = hardware.memory?.used_mb ?? "--";
+    const memTotal = hardware.memory?.total_mb ?? "--";
+    const memPercent = hardware.memory?.percent ?? "--";
+    const diskPercent = hardware.disk?.percent ?? "--";
+    const diskUsed = hardware.disk?.used_gb ?? "--";
+    const diskTotal = hardware.disk?.total_gb ?? "--";
+
+    const redisStatusEl = document.getElementById("hh-redis-status");
+    if (redis.status === "connected") {
+      redisStatusEl.textContent = "✅ Connected";
+      redisStatusEl.classList.remove("text-muted");
+      redisStatusEl.classList.add("text-success");
+    } else {
+      redisStatusEl.textContent = "❌ Disconnected";
+      redisStatusEl.classList.remove("text-muted");
+      redisStatusEl.classList.add("text-danger");
+    }
+
+    document.getElementById("hh-memory-status").textContent =
+      memUsed !== "--" && memTotal !== "--"
+        ? `${memUsed}MB / ${memTotal}MB (${memPercent}%)`
+        : "--";
+
+    document.getElementById("hh-disk-status").textContent =
+      diskUsed !== "--" && diskTotal !== "--"
+        ? `${diskUsed}GB / ${diskTotal}GB (${diskPercent}%)`
+        : "--";
+
+    document.getElementById("hh-cpu-temp-status").textContent =
+      `CPU: ${cpuUsage}%  |  Temp: ${temp}°C`;
+  }
+
+  function statusBadge(status) {
+    if (!status) return "<span class='badge bg-secondary'>⚪ Unknown</span>";
+    const lower = String(status).toLowerCase();
+    if (lower === "running" || lower === "ready" || lower === "good") {
+      return "<span class='badge bg-success'>✅ Running</span>";
+    }
+    if (lower === "warning") {
+      return "<span class='badge bg-warning text-dark'>🟡 Warning</span>";
+    }
+    if (lower === "error" || lower === "stopped") {
+      return "<span class='badge bg-danger'>❌ Error</span>";
+    }
+    return "<span class='badge bg-secondary'>⚪ Unknown</span>";
+  }
+
+  function renderApps(apps) {
+    const grid = document.getElementById("hh-app-grid");
+    const empty = document.getElementById("hh-app-grid-empty");
+    grid.innerHTML = "";
+
+    if (!apps || apps.length === 0) {
+      empty.style.display = "block";
+      return;
+    }
+
+    empty.style.display = "none";
+
+    for (const app of apps) {
+      const col = document.createElement("div");
+      col.className = "col-12 col-md-6 col-lg-4";
+
+      const statusHtml = statusBadge(app.status);
+
+      col.innerHTML = `
+        <div class="card h-100 hh-card">
+          <div class="card-body d-flex flex-column">
+            <h5 class="card-title d-flex justify-content-between align-items-center">
+              <span>${app.name}</span>
+              <small class="text-muted text-uppercase">${app.type}</small>
+            </h5>
+            <p class="card-text small text-muted mb-2">${app.description || "No description"}</p>
+            <p class="mb-2">Status: ${statusHtml}</p>
+            <p class="mb-2"><small class="text-muted">Version: ${app.version}</small></p>
+            <div class="mt-auto d-flex gap-2">
+              <button class="btn btn-sm btn-outline-secondary" onclick="viewAppLogs('${app.app_id}', '${app.name}')">View Logs</button>
+              <button class="btn btn-sm btn-outline-primary" onclick="viewAppDetails('${app.app_id}')">Details</button>
+            </div>
+          </div>
+        </div>`;
+      grid.appendChild(col);
+    }
+  }
+
+  async function refreshDashboard() {
+    try {
+      const [health, appList] = await Promise.all([
+        fetchJson("/health"),
+        fetchJson("/api/apps"),
+      ]);
+      renderSystemStatus(health);
+      renderApps(appList.apps || []);
+      setLastUpdated();
+    } catch (err) {
+      console.error("Failed to refresh dashboard", err);
+    }
+  }
+
+  document.getElementById("hh-refresh-all").addEventListener("click", refreshDashboard);
+  document.getElementById("hh-refresh-apps").addEventListener("click", async () => {
+    try {
+      const data = await fetchJson("/api/apps");
+      renderApps(data.apps || []);
+      setLastUpdated();
+    } catch (err) {
+      console.error("Failed to refresh apps", err);
+    }
+  });
+
+  // App details modal
+  let currentAppId = null;
+  
+  async function viewAppDetails(appId) {
+    currentAppId = appId;
+    const modal = new bootstrap.Modal(document.getElementById('appDetailsModal'));
+    const content = document.getElementById('appDetailsContent');
+    
+    content.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+    modal.show();
+    
+    try {
+      const app = await fetchJson(`/api/apps/${appId}`);
+      
+      const statusBadgeHtml = statusBadge(app.status);
+      const portInfo = app.runtime_info?.assigned_port ? `Port ${app.runtime_info.assigned_port}` : 'No port assigned';
+      const serviceStatus = app.runtime_info?.service_status || 'Unknown';
+      
+      content.innerHTML = `
+        <div class="row g-3">
+          <div class="col-12">
+            <h4>${app.name} ${statusBadgeHtml}</h4>
+            <p class="text-muted">${app.description || 'No description'}</p>
+          </div>
+          
+          <div class="col-md-6">
+            <div class="card">
+              <div class="card-header fw-semibold">App Information</div>
+              <div class="card-body">
+                <table class="table table-sm">
+                  <tr><td class="fw-semibold">App ID:</td><td>${app.app_id}</td></tr>
+                  <tr><td class="fw-semibold">Type:</td><td class="text-uppercase">${app.type}</td></tr>
+                  <tr><td class="fw-semibold">Version:</td><td>${app.version}</td></tr>
+                  <tr><td class="fw-semibold">Status:</td><td>${app.status}</td></tr>
+                  <tr><td class="fw-semibold">Path:</td><td><small>${app.path}</small></td></tr>
+                </table>
+              </div>
+            </div>
+          </div>
+          
+          <div class="col-md-6">
+            <div class="card">
+              <div class="card-header fw-semibold">Runtime Information</div>
+              <div class="card-body">
+                <table class="table table-sm">
+                  <tr><td class="fw-semibold">Assigned Port:</td><td>${portInfo}</td></tr>
+                  <tr><td class="fw-semibold">Service Status:</td><td>${serviceStatus}</td></tr>
+                  <tr><td class="fw-semibold">Process ID:</td><td>${app.runtime_info?.process_id || 'N/A'}</td></tr>
+                  <tr><td class="fw-semibold">Service Name:</td><td>${app.runtime_info?.service_name || 'N/A'}</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>
+          
+          <div class="col-12">
+            <div class="card">
+              <div class="card-header fw-semibold">Configuration</div>
+              <div class="card-body">
+                <div class="row">
+                  <div class="col-md-3"><strong>Has UI:</strong> ${app.manifest?.config?.has_UI ? '✅ Yes' : '❌ No'}</div>
+                  <div class="col-md-3"><strong>Redis Required:</strong> ${app.manifest?.config?.redis_required ? '✅ Yes' : '❌ No'}</div>
+                  <div class="col-md-3"><strong>Auto Start:</strong> ${app.manifest?.config?.auto_start ? '✅ Yes' : '❌ No'}</div>
+                  <div class="col-md-3"><strong>Restart Policy:</strong> ${app.manifest?.config?.restart_policy || 'N/A'}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="col-12 text-end">
+            <button class="btn btn-outline-secondary" onclick="viewAppLogs('${app.app_id}', '${app.name}')">View Logs</button>
+            ${app.type === 'service' ? `
+              <button class="btn btn-outline-success" onclick="startApp('${app.app_id}')">Start</button>
+              <button class="btn btn-outline-warning" onclick="stopApp('${app.app_id}')">Stop</button>
+              <button class="btn btn-outline-info" onclick="restartApp('${app.app_id}')">Restart</button>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    } catch (err) {
+      content.innerHTML = `<div class="alert alert-danger">Failed to load app details: ${err.message}</div>`;
+    }
+  }
+  
+  // Log viewer modal
+  let currentLogAppId = null;
+  let currentLogAppName = null;
+  
+  async function viewAppLogs(appId, appName) {
+    currentLogAppId = appId;
+    currentLogAppName = appName;
+    
+    const modal = new bootstrap.Modal(document.getElementById('logViewerModal'));
+    document.getElementById('logViewerModalLabel').textContent = `${appName} - Logs`;
+    modal.show();
+    
+    await refreshLogs();
+  }
+  
+  async function refreshLogs() {
+    if (!currentLogAppId) return;
+    
+    const logContent = document.getElementById('logContent');
+    logContent.innerHTML = '<code>Loading logs...</code>';
+    
+    try {
+      const response = await fetchJson(`/api/services/${currentLogAppId}/logs?lines=50`);
+      const logs = response.data?.logs || [];
+      
+      if (logs.length === 0) {
+        logContent.innerHTML = '<code class="text-muted">No logs available</code>';
+      } else {
+        logContent.innerHTML = `<code>${logs.join('\n')}</code>`;
+        document.getElementById('logLineCount').textContent = logs.length;
+      }
+    } catch (err) {
+      logContent.innerHTML = `<code class="text-danger">Failed to load logs: ${err.message}</code>`;
+    }
+  }
+  
+  // Service control functions
+  async function startApp(appId) {
+    try {
+      await fetch(`/api/services/${appId}/start`, { method: 'POST' });
+      alert('Service start command sent');
+      await viewAppDetails(appId);
+    } catch (err) {
+      alert(`Failed to start service: ${err.message}`);
+    }
+  }
+  
+  async function stopApp(appId) {
+    try {
+      await fetch(`/api/services/${appId}/stop`, { method: 'POST' });
+      alert('Service stop command sent');
+      await viewAppDetails(appId);
+    } catch (err) {
+      alert(`Failed to stop service: ${err.message}`);
+    }
+  }
+  
+  async function restartApp(appId) {
+    try {
+      await fetch(`/api/services/${appId}/restart`, { method: 'POST' });
+      alert('Service restart command sent');
+      await viewAppDetails(appId);
+    } catch (err) {
+      alert(`Failed to restart service: ${err.message}`);
+    }
+  }
+
+  // Initial load
+  refreshDashboard();
+</script>
+{% endblock %}

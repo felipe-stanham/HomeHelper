@@ -3,13 +3,15 @@ Main FastAPI application for HomeHelper
 """
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from pathlib import Path
 
 from homehelper.core.config import config_manager
 from homehelper.core.redis_client import RedisHealthMonitor
 from homehelper.utils.system_monitor import SystemMonitor
+from homehelper.web.dashboard import router as dashboard_router
 
 
 # Initialize logging
@@ -74,6 +76,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan
 )
+
+# Include web dashboard routes
+app.include_router(dashboard_router)
 
 
 @app.get("/")
