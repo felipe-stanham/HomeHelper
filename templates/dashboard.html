@@ -98,6 +98,26 @@
       </div>
     </div>
   </div>
+
+  <!-- Service App UI Modal -->
+  <div class="modal fade" id="serviceUIModal" tabindex="-1" aria-labelledby="serviceUIModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="serviceUIModalLabel">Service UI</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3" id="serviceUINav">
+            <!-- Resource tabs will be added here -->
+          </div>
+          <div id="serviceUIContent">
+            <div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -305,6 +325,9 @@
           
           <div class="col-12 text-end">
             <button class="btn btn-outline-secondary" onclick="viewAppLogs('${app.app_id}', '${app.name}')">View Logs</button>
+            ${app.type === 'service' && app.manifest?.config?.has_UI ? `
+              <button class="btn btn-outline-primary" onclick="viewServiceUI('${app.app_id}', '${app.name}')">🖥️ View UI</button>
+            ` : ''}
             ${app.type === 'service' ? `
               <button class="btn btn-outline-success" onclick="startApp('${app.app_id}')">Start</button>
               <button class="btn btn-outline-warning" onclick="stopApp('${app.app_id}')">Stop</button>
@@ -382,6 +405,78 @@
       await viewAppDetails(appId);
     } catch (err) {
       alert(`Failed to restart service: ${err.message}`);
+    }
+  }
+
+  // Service UI viewer
+  let currentServiceUIAppId = null;
+  let currentServiceUIResources = [];
+  
+  async function viewServiceUI(appId, appName) {
+    currentServiceUIAppId = appId;
+    
+    const modal = new bootstrap.Modal(document.getElementById('serviceUIModal'));
+    document.getElementById('serviceUIModalLabel').textContent = `${appName} - UI`;
+    
+    const navEl = document.getElementById('serviceUINav');
+    const contentEl = document.getElementById('serviceUIContent');
+    
+    navEl.innerHTML = '';
+    contentEl.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+    
+    modal.show();
+    
+    try {
+      // Discover UI resources
+      const response = await fetchJson(`/api/apps/${appId}/ui/resources`);
+      
+      if (!response.has_ui || response.resources.length === 0) {
+        contentEl.innerHTML = '<div class="alert alert-info">This service does not expose any UI resources.</div>';
+        return;
+      }
+      
+      currentServiceUIResources = response.resources;
+      
+      // Create resource tabs
+      let tabsHtml = '<ul class="nav nav-tabs" role="tablist">';
+      response.resources.forEach((resource, index) => {
+        const active = index === 0 ? 'active' : '';
+        tabsHtml += `
+          <li class="nav-item" role="presentation">
+            <button class="nav-link ${active}" id="tab-${resource}" data-bs-toggle="tab" 
+                    data-bs-target="#content-${resource}" type="button" role="tab"
+                    onclick="loadServiceUIResource('${appId}', '${resource}')">
+              ${resource.charAt(0).toUpperCase() + resource.slice(1)}
+            </button>
+          </li>`;
+      });
+      tabsHtml += '</ul>';
+      navEl.innerHTML = tabsHtml;
+      
+      // Load first resource
+      await loadServiceUIResource(appId, response.resources[0]);
+      
+    } catch (err) {
+      contentEl.innerHTML = `<div class="alert alert-danger">Failed to load UI: ${err.message}</div>`;
+    }
+  }
+  
+  async function loadServiceUIResource(appId, resource) {
+    const contentEl = document.getElementById('serviceUIContent');
+    contentEl.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+    
+    try {
+      const response = await fetchJson(`/api/apps/${appId}/ui/${resource}`);
+      
+      contentEl.innerHTML = `
+        <div class="mb-2">
+          <strong>${response.count}</strong> ${resource} found
+          <button class="btn btn-sm btn-outline-primary float-end" onclick="loadServiceUIResource('${appId}', '${resource}')">🔄 Refresh</button>
+        </div>
+        ${response.html}
+      `;
+    } catch (err) {
+      contentEl.innerHTML = `<div class="alert alert-danger">Failed to load ${resource}: ${err.message}</div>`;
     }
   }
 

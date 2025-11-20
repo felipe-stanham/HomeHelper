@@ -676,6 +676,77 @@ async def cleanup_stale_ports():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# UI Integration Endpoints
+
+@app.get("/api/apps/{app_id}/ui/resources")
+async def get_app_ui_resources(app_id: str):
+    """Discover UI resources available from a service app"""
+    try:
+        from .web.ui_renderer import ui_renderer
+        
+        app = app_manager.registry.get_app(app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+        
+        if app.type != "service":
+            raise HTTPException(status_code=400, detail="Only service apps can have UI resources")
+        
+        port = app.runtime_info.assigned_port
+        if not port:
+            raise HTTPException(status_code=400, detail="App is not running or has no assigned port")
+        
+        base_url = f"http://localhost:{port}"
+        resources = await ui_renderer.discover_ui_resources(base_url)
+        
+        if resources is None:
+            return {"has_ui": False, "resources": []}
+        
+        return {"has_ui": True, "resources": resources, "base_url": base_url}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to discover UI resources for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/apps/{app_id}/ui/{resource}")
+async def get_app_ui_resource(app_id: str, resource: str):
+    """Fetch data for a specific UI resource"""
+    try:
+        from .web.ui_renderer import ui_renderer
+        
+        app = app_manager.registry.get_app(app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+        
+        port = app.runtime_info.assigned_port
+        if not port:
+            raise HTTPException(status_code=400, detail="App is not running")
+        
+        base_url = f"http://localhost:{port}"
+        data = await ui_renderer.fetch_resource_list(base_url, resource)
+        
+        if data is None:
+            raise HTTPException(status_code=404, detail=f"Resource {resource} not found")
+        
+        # Render as HTML table
+        html = ui_renderer.render_table_html(data, resource)
+        
+        return {
+            "resource": resource,
+            "data": data,
+            "html": html,
+            "count": len(data)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch UI resource {resource} for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     
