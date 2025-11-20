@@ -43,10 +43,44 @@ async def lifespan(app: FastAPI):
     logger = logging.getLogger("homehelper.main")
     logger.info("Starting HomeHelper main application")
     
+    # Auto-start Redis if not running
+    logger.info("Checking Redis status...")
+    redis_status = redis_monitor.get_redis_metrics()
+    if redis_status.get("status") != "connected":
+        logger.warning("Redis is not running, attempting to start...")
+        try:
+            import subprocess
+            import platform
+            if platform.system() == "Darwin":  # macOS
+                subprocess.run(["brew", "services", "start", "redis"], 
+                             capture_output=True, check=False)
+                logger.info("Started Redis via brew services")
+            else:  # Linux
+                subprocess.run(["sudo", "systemctl", "start", "redis"], 
+                             capture_output=True, check=False)
+                logger.info("Started Redis via systemctl")
+        except Exception as e:
+            logger.error(f"Failed to auto-start Redis: {e}")
+    else:
+        logger.info("Redis is already running")
+    
     # Discover apps on startup
     logger.info("Discovering applications...")
     discovered_count = app_manager.discover_apps()
     logger.info(f"Discovered {discovered_count} applications")
+    
+    # Auto-start service apps with auto_start=true
+    logger.info("Auto-starting service apps...")
+    auto_start_count = 0
+    for app_entry in app_manager.registry.get_all_apps():
+        if app_entry.type == "service" and app_entry.manifest.config.auto_start:
+            logger.info(f"Auto-starting service app: {app_entry.name} ({app_entry.app_id})")
+            if macos_process_manager.start_app(app_entry.app_id):
+                auto_start_count += 1
+                logger.info(f"Successfully started {app_entry.name}")
+            else:
+                logger.error(f"Failed to start {app_entry.name}")
+    logger.info(f"Auto-started {auto_start_count} service apps")
     
     logger.info("HomeHelper main application started successfully")
     
@@ -54,6 +88,9 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down HomeHelper main application")
+    logger.info("Stopping all managed service apps...")
+    macos_process_manager.stop_all()
+    logger.info("Shutdown complete")
 
 
 # Initialize components at module level for testing
@@ -63,10 +100,13 @@ redis_monitor = RedisHealthMonitor(config_manager.get_redis_url())
 # Initialize app management components
 from .managers import AppManager, PortManager, ServiceManager
 from .managers.health_monitor import HealthMonitor
+from .managers.process_manager_macos import MacOSProcessManager
+
 port_manager = PortManager(config_manager)
 app_manager = AppManager(config_manager, port_manager)
 service_manager = ServiceManager(config_manager, app_manager)
 health_monitor = HealthMonitor(config_manager, app_manager, service_manager)
+macos_process_manager = MacOSProcessManager(config_manager, app_manager, port_manager)
 
 
 # Create FastAPI app
