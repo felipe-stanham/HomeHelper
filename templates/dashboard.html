@@ -394,7 +394,7 @@
       content.innerHTML = `
         <div class="row g-3">
           <div class="col-12">
-            <h4>${app.name} ${statusBadgeHtml}</h4>
+            <h4 class="text-break">${app.name} ${statusBadgeHtml}</h4>
             <p class="text-muted">${app.description || 'No description'}</p>
           </div>
           
@@ -402,12 +402,12 @@
             <div class="card">
               <div class="card-header fw-semibold">App Information</div>
               <div class="card-body">
-                <table class="table table-sm">
-                  <tr><td class="fw-semibold">App ID:</td><td>${app.app_id}</td></tr>
+                <table class="table table-sm mb-0">
+                  <tr><td class="fw-semibold" style="width: 35%;">App ID:</td><td class="text-break">${app.app_id}</td></tr>
                   <tr><td class="fw-semibold">Type:</td><td class="text-uppercase">${app.type}</td></tr>
                   <tr><td class="fw-semibold">Version:</td><td>${app.version}</td></tr>
                   <tr><td class="fw-semibold">Status:</td><td>${app.status}</td></tr>
-                  <tr><td class="fw-semibold">Path:</td><td><small>${app.path}</small></td></tr>
+                  <tr><td class="fw-semibold">Path:</td><td class="text-break" style="word-break: break-all;"><small>${app.path}</small></td></tr>
                 </table>
               </div>
             </div>
@@ -417,12 +417,12 @@
             <div class="card">
               <div class="card-header fw-semibold">Runtime Information</div>
               <div class="card-body">
-                <table class="table table-sm">
-                  <tr><td class="fw-semibold">Assigned Port:</td><td>${portInfo}</td></tr>
+                <table class="table table-sm mb-0">
+                  <tr><td class="fw-semibold" style="width: 45%;">Assigned Port:</td><td>${portInfo}</td></tr>
                   <tr><td class="fw-semibold">Service Status:</td><td>${serviceStatus}</td></tr>
                   <tr><td class="fw-semibold">Process ID:</td><td>${app.runtime_info?.process_id || 'N/A'}</td></tr>
                   <tr><td class="fw-semibold">Running Time:</td><td>${uptime}</td></tr>
-                  <tr><td class="fw-semibold">Service Name:</td><td>${app.runtime_info?.service_name || 'N/A'}</td></tr>
+                  <tr><td class="fw-semibold">Service Name:</td><td class="text-break">${app.runtime_info?.service_name || 'N/A'}</td></tr>
                 </table>
               </div>
             </div>
@@ -432,11 +432,11 @@
             <div class="card">
               <div class="card-header fw-semibold">Configuration</div>
               <div class="card-body">
-                <div class="row">
-                  <div class="col-md-3"><strong>Has UI:</strong> ${app.manifest?.config?.has_UI ? '✅ Yes' : '❌ No'}</div>
-                  <div class="col-md-3"><strong>Redis Required:</strong> ${app.manifest?.config?.redis_required ? '✅ Yes' : '❌ No'}</div>
-                  <div class="col-md-3"><strong>Auto Start:</strong> ${app.manifest?.config?.auto_start ? '✅ Yes' : '❌ No'}</div>
-                  <div class="col-md-3"><strong>Restart Policy:</strong> ${app.manifest?.config?.restart_policy || 'N/A'}</div>
+                <div class="row g-2">
+                  <div class="col-6 col-md-3"><strong>Has UI:</strong><br>${app.manifest?.config?.has_UI ? '✅ Yes' : '❌ No'}</div>
+                  <div class="col-6 col-md-3"><strong>Redis Required:</strong><br>${app.manifest?.config?.redis_required ? '✅ Yes' : '❌ No'}</div>
+                  <div class="col-6 col-md-3"><strong>Auto Start:</strong><br>${app.manifest?.config?.auto_start ? '✅ Yes' : '❌ No'}</div>
+                  <div class="col-6 col-md-3"><strong>Restart Policy:</strong><br>${app.manifest?.config?.restart_policy || 'always'}</div>
                 </div>
               </div>
             </div>
@@ -678,9 +678,12 @@
   // Service UI viewer
   let currentServiceUIAppId = null;
   let currentServiceUIResources = [];
+  let currentServiceUIData = {};
+  const PAGE_SIZE = 20;
   
   async function viewServiceUI(appId, appName) {
     currentServiceUIAppId = appId;
+    currentServiceUIData = {};
     
     const modal = new bootstrap.Modal(document.getElementById('serviceUIModal'));
     document.getElementById('serviceUIModalLabel').textContent = `${appName} - UI`;
@@ -712,7 +715,7 @@
           <li class="nav-item" role="presentation">
             <button class="nav-link ${active}" id="tab-${resource}" data-bs-toggle="tab" 
                     data-bs-target="#content-${resource}" type="button" role="tab"
-                    onclick="loadServiceUIResource('${appId}', '${resource}')">
+                    onclick="loadServiceUIResource('${appId}', '${resource}', 1)">
               ${resource.charAt(0).toUpperCase() + resource.slice(1)}
             </button>
           </li>`;
@@ -721,26 +724,107 @@
       navEl.innerHTML = tabsHtml;
       
       // Load first resource
-      await loadServiceUIResource(appId, response.resources[0]);
+      await loadServiceUIResource(appId, response.resources[0], 1);
       
     } catch (err) {
       contentEl.innerHTML = `<div class="alert alert-danger">Failed to load UI: ${err.message}</div>`;
     }
   }
   
-  async function loadServiceUIResource(appId, resource) {
+  async function loadServiceUIResource(appId, resource, page = 1) {
     const contentEl = document.getElementById('serviceUIContent');
     contentEl.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
     
     try {
       const response = await fetchJson(`/api/apps/${appId}/ui/${resource}`);
       
+      // Store full data for pagination
+      currentServiceUIData[resource] = response;
+      
+      // Calculate pagination
+      const totalCount = response.count;
+      const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+      const startIndex = (page - 1) * PAGE_SIZE;
+      const endIndex = Math.min(startIndex + PAGE_SIZE, totalCount);
+      
+      // Paginate the HTML content (if it's a table)
+      let paginatedHtml = response.html;
+      if (totalCount > PAGE_SIZE && response.html.includes('<table')) {
+        // Extract table rows and paginate
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(response.html, 'text/html');
+        const table = doc.querySelector('table');
+        
+        if (table) {
+          const tbody = table.querySelector('tbody');
+          if (tbody) {
+            const allRows = Array.from(tbody.querySelectorAll('tr'));
+            const paginatedRows = allRows.slice(startIndex, endIndex);
+            
+            // Clear tbody and add paginated rows
+            tbody.innerHTML = '';
+            paginatedRows.forEach(row => tbody.appendChild(row));
+            
+            paginatedHtml = table.outerHTML;
+          }
+        }
+      }
+      
+      // Build pagination controls
+      let paginationHtml = '';
+      if (totalPages > 1) {
+        paginationHtml = '<nav aria-label="Page navigation"><ul class="pagination pagination-sm justify-content-center mt-3">';
+        
+        // Previous button
+        paginationHtml += `
+          <li class="page-item ${page === 1 ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="event.preventDefault(); loadServiceUIResource('${appId}', '${resource}', ${page - 1})">Previous</a>
+          </li>`;
+        
+        // Page numbers (show max 5 pages)
+        const startPage = Math.max(1, page - 2);
+        const endPage = Math.min(totalPages, page + 2);
+        
+        if (startPage > 1) {
+          paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="event.preventDefault(); loadServiceUIResource('${appId}', '${resource}', 1)">1</a></li>`;
+          if (startPage > 2) {
+            paginationHtml += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+          }
+        }
+        
+        for (let i = startPage; i <= endPage; i++) {
+          paginationHtml += `
+            <li class="page-item ${i === page ? 'active' : ''}">
+              <a class="page-link" href="#" onclick="event.preventDefault(); loadServiceUIResource('${appId}', '${resource}', ${i})">${i}</a>
+            </li>`;
+        }
+        
+        if (endPage < totalPages) {
+          if (endPage < totalPages - 1) {
+            paginationHtml += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+          }
+          paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="event.preventDefault(); loadServiceUIResource('${appId}', '${resource}', ${totalPages})">${totalPages}</a></li>`;
+        }
+        
+        // Next button
+        paginationHtml += `
+          <li class="page-item ${page === totalPages ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="event.preventDefault(); loadServiceUIResource('${appId}', '${resource}', ${page + 1})">Next</a>
+          </li>`;
+        
+        paginationHtml += '</ul></nav>';
+      }
+      
       contentEl.innerHTML = `
-        <div class="mb-2">
-          <strong>${response.count}</strong> ${resource} found
-          <button class="btn btn-sm btn-outline-primary float-end" onclick="loadServiceUIResource('${appId}', '${resource}')">🔄 Refresh</button>
+        <div class="mb-2 d-flex justify-content-between align-items-center flex-wrap">
+          <div>
+            <strong>${totalCount}</strong> ${resource} found
+            ${totalPages > 1 ? `<span class="text-muted ms-2">(Page ${page} of ${totalPages}, showing ${startIndex + 1}-${endIndex})</span>` : ''}
+          </div>
+          <button class="btn btn-sm btn-outline-primary" onclick="loadServiceUIResource('${appId}', '${resource}', ${page})">🔄 Refresh</button>
         </div>
-        ${response.html}
+        ${paginatedHtml}
+        ${paginationHtml}
       `;
     } catch (err) {
       contentEl.innerHTML = `<div class="alert alert-danger">Failed to load ${resource}: ${err.message}</div>`;
