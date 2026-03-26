@@ -14,6 +14,7 @@ At the start of every session:
   - Key architectural decisions that must be respected across all projects
   - A list of completed and active projects with one-line summaries and links to their `P-xxxx.md`
   - Cross-project constraints that apply to every session
+  - Deployment targets and environments (see Deployment section below)
 - Never load individual project files unless the user specifies which project to work on.
 - When a project's final scope is marked `[DONE]`, update the project's entry in `docs/SYSTEM.md` to reflect its completed status.
 - If `docs/SYSTEM.md` does not exist at session start, ask the user whether to create it before proceeding.
@@ -38,6 +39,15 @@ The expected `SYSTEM.md` format is:
 |---------|-----------------|-------------|--------------------------------------|
 | P-0001  | [Project Name]  | [DONE]      | One-line description                 |
 | P-0002  | [Project Name]  | [ACTIVE]    | One-line description                 |
+
+## Deployment Targets
+<!-- See Deployment section in this file for details -->
+| Target      | Environments | Description                        |
+|-------------|--------------|------------------------------------|
+| local       | dev          | Developer workstation              |
+| homeserver  | dev, tst, prd| Self-hosted multi-environment      |
+| clientA     | prd          | Client A production                |
+| clientB     | prd          | Client B production                |
 ```
 
 ---
@@ -88,6 +98,76 @@ Every project must support at least two environment configurations: **dev** (loc
 
 ---
 
+## Deployment
+
+### Overview
+
+Deployment configuration lives in two places:
+- **`docs/SYSTEM.md`** — Describes the deployment topology: which targets exist, what environments run on each, and the general deployment procedure. This is committed to git.
+- **`.deploy-secrets`** — Contains connection credentials (IPs, usernames, SSH keys, ports) for each target. **This file is in `.gitignore` and must never be committed.**
+
+### `.deploy-secrets` Format
+
+```
+# .deploy-secrets — NOT committed to git
+# One section per target+environment combination
+
+[homeserver.dev]
+HOST=192.168.x.x
+SSH_USER=deploy
+SSH_KEY_PATH=~/.ssh/homeserver
+DEPLOY_PATH=/opt/apps/myapp-dev
+PORT=8081
+
+[homeserver.prd]
+HOST=192.168.x.x
+SSH_USER=deploy
+SSH_KEY_PATH=~/.ssh/homeserver
+DEPLOY_PATH=/opt/apps/myapp
+PORT=8080
+
+[clientA.prd]
+HOST=<ip>
+SSH_USER=<user>
+SSH_KEY_PATH=~/.ssh/clientA
+DEPLOY_PATH=/opt/apps/myapp
+PORT=8080
+```
+
+### Rules
+
+- Before any deployment, read `.deploy-secrets` and verify the target exists.
+- **Never deploy to a `prd` target without explicit user confirmation.**
+- Always run regression tests before deploying (see Testing section). Deploy to `tst` targets from the `tst` branch; deploy to `prd` targets from `main` only.
+- Log every deployment action: target, environment, timestamp, commit hash.
+- If `.deploy-secrets` does not exist or is missing a target, stop and ask the user to provide the credentials.
+
+### Deployment Procedure in `docs/SYSTEM.md`
+
+The `Deployment` section in `SYSTEM.md` describes the procedure (steps) for deploying to each target category. The procedure is committed; the secrets are not. Example:
+
+```markdown
+## Deployment
+
+### Procedure
+1. Run regression tests (`TESTS.md`) — all must pass
+2. Build the project for the target environment
+3. Read `.deploy-secrets` for the target
+4. SSH to the target and deploy
+5. Run smoke tests against the deployed instance
+6. Log the deployment in `DEPLOYMENTS.md`
+
+### Targets
+| Target      | Environments | Description                        |
+|-------------|--------------|------------------------------------|
+| local       | dev          | Developer workstation              |
+| homeserver  | dev, tst, prd| Self-hosted multi-environment      |
+| clientA     | prd          | Client A production                |
+| clientB     | prd          | Client B production                |
+```
+
+---
+
 ## Logging
 
 - Use Python `logging` module (or the language-appropriate equivalent). Never use `print()` for operational output.
@@ -105,13 +185,48 @@ Every project must support at least two environment configurations: **dev** (loc
 
 ## Branching Strategy
 
-- Branch naming: `scope/P-XXXX-NUMBER-<short-description>`
-- Always branch off `main`. Never branch off another scope branch.
-- One agent per branch when working in parallel.
-- Never commit directly to `main` except for trivial fixes.
-- Before merging to main: run all regression tests (see Testing section below). Do not merge if any test fails.
-- Check with me before merging to main.
-- Delete the branches after merging to main.
+### Branch Hierarchy
+
+```
+main (production-ready)
+ └── tst (testing / staging — deploys to tst targets)
+      └── dev (integration — all scope work merges here)
+           ├── scope/P-XXXX-1-<short-description>
+           ├── scope/P-XXXX-2-<short-description>
+           └── scope/P-XXXX-N-<short-description>
+```
+
+- **`main`** — Production-ready code. Only receives merges from `tst` after explicit user approval. Maps to `prd` deployment targets.
+- **`tst`** — Testing/staging branch. Receives merges from `dev` after all regression tests pass. Used to deploy to `tst` targets for validation.
+- **`dev`** — Integration branch for active project work. All scope branches are created from and merged back into `dev`.
+- **`scope/P-XXXX-N-<short-description>`** — One branch per scope, branched from `dev`.
+
+### Rules
+
+- Scope branches are created from `dev`. Never branch off another scope branch.
+- One agent per branch when working in parallel. Use `isolation: worktree` in agent definitions or `claude --worktree <name>` to run parallel sessions in isolated git worktrees. Do not manually clone the repo into separate folders.
+- Never commit directly to `main` or `tst`.
+- Commit to `dev` only for trivial cross-scope fixes.
+
+### Promotion Flow
+
+1. **Scope → `dev`:** After code review passes, merge the scope branch into `dev`. Delete the scope branch.
+2. **`dev` → `tst`:** When the project is complete (all scopes `[DONE]`), run regression tests on `dev`. If all pass, merge `dev` into `tst` and deploy to `tst` targets for validation.
+3. **`tst` → `main`:** After I review and approve on `tst`, merge `tst` into `main`. Deploy to `prd` targets.
+
+---
+
+## Agents 
+
+### Usage
+
+- **Code review:** After completing a scope's implementation, delegate review to `@code-reviewer` before committing.
+- **Testing:** After code review passes, delegate test execution to `@tester`. Only mark a scope `[DONE]` if the tester reports all pass.
+- **Documentation:** After a scope is marked `[DONE]`, delegate documentation updates to `@doc-updater`.
+
+### Creating New Agents
+
+If a project requires a specialized agent (e.g., a database migration agent or a performance profiler), create a new `.md` file in `.claude/agents/` following the same frontmatter format. See the existing agents for examples.
 
 ---
 
@@ -128,83 +243,44 @@ For any non-trivial task, plan before coding:
 
 ## CodeReview
 
-After finishing a task and befor commit, review the code with the review agent.
+After finishing a task and before commit, delegate the review to the `code-reviewer` agent. The reviewer checks for:
+- Adherence to the project's architecture principles (from `SYSTEM.md`)
+- Correct environment handling (no hardcoded credentials, proper ENV checks)
+- Code simplicity (no unnecessary abstractions)
+- Consistency with existing patterns in the codebase
+
+Do not commit until the review passes. If the reviewer flags issues, fix them and re-review.
 
 ---
 
 ## Testing
 
-### Core Rule
+### Rules
 
-**Tests must be executed, not reviewed.** Reading code and confirming it "looks correct" is not testing. Every test must run as code, produce observable output, and report pass/fail. No scope can be marked `[DONE]` based on code review alone.
+- **Tests must be executed, not reviewed.** Reading code and confirming it "looks correct" is not testing. No scope can be marked `[DONE]` based on code review alone.
+- **Always test against `dev` environment.** Before running any test, verify `ENV != prod`. If it is, stop and warn the user.
+- Tests that create, modify, or delete external resources must use dev/sandbox credentials only.
 
 ### Declarative Tests
 
-Tests are defined declaratively in `TESTS.md` (and in each scope's acceptance criteria), not as pre-written test scripts. Each test entry describes **what to verify** and **what the expected result is**. At execution time, Claude Code reads the declarative test, writes a throwaway script or command to verify it, executes it, and reports pass/fail. No persistent test code is maintained.
+Tests are defined declaratively in `TESTS.md` and in each scope's acceptance criteria — not as pre-written test scripts. Each entry describes **what to verify** and **what the expected result is**. The `tester` agent handles execution: it generates throwaway verification scripts, runs them, and reports pass/fail.
 
-This means:
-- `TESTS.md` is the only test artifact that is maintained.
-- There is no `tests/` directory with code files to keep in sync.
-- When Claude Code runs tests, it generates the verification code on the fly, runs it, and discards it.
-- The test description in `TESTS.md` must be specific enough that Claude Code can unambiguously generate the verification. Include: what to call/check, with what inputs, and what the expected output or behavior is.
+- `TESTS.md` is the only test artifact that is maintained. There is no `tests/` directory.
+- Test descriptions must be specific enough for the `tester` agent to generate verification without guessing. Include concrete inputs and expected outputs.
+- Format: `- **test_name:** [What to do] → [Expected result]`
 
-### How to Test
+### Scope Testing
 
-When a scope is complete, execute tests against its acceptance criteria. Choose the appropriate method based on what the scope implements:
+After completing a scope and passing code review, delegate to the `tester` agent. It tests the scope's acceptance criteria. All must pass before marking the scope `[DONE]`.
 
-- **API endpoints** → Run requests against the running service. Assert status codes, response shapes, and business logic.
-- **UI** → Use Playwright (via MCP if available) to interact with the running app. Verify that elements render, user flows work end-to-end, and error states display correctly.
-- **Data processing / business logic** → Call functions directly with known inputs and assert expected outputs.
-- **File output** → Generate the file, then programmatically inspect it (e.g., open with the appropriate library and assert values, structure, formatting).
+### Regression Tests
 
-### Environment
-
-- **Always run tests against the `dev` environment.** Before executing any test, verify `ENV != prod`. If it is, stop and warn the user.
-- Tests that create, modify, or delete external resources must use dev/sandbox credentials only.
-
-### Test Execution Flow
-
-For each scope being completed:
-1. Ensure the application/service is running (if applicable).
-2. Read the scope's acceptance criteria from `P-xxxx.md`.
-3. For each acceptance criterion, generate a verification script, execute it, and report pass/fail.
-4. All tests must pass. If any fail, fix the implementation and re-run.
-5. Only after all tests pass, mark the scope `[DONE]`.
-
-### Regression Tests (`TESTS.md`)
-
-`TESTS.md` is the curated regression test registry. It contains only **critical-path tests** — tests that verify core functionality which, if broken, would make the system unusable or produce incorrect results.
-
-**What to include in `TESTS.md`:**
-- Tests for core workflows (e.g., "fetch a record tree and verify the hierarchy is correct")
-- Tests for data integrity (e.g., "output file contains correct number of sections with expected names")
-- Tests for integration points (e.g., "API authentication works and returns valid data")
-- Tests for destructive operations (e.g., "create operation produces correct resource hierarchy")
-
-**What NOT to include:**
-- Cosmetic tests (border styles, column widths, exact color hex values)
-- Edge cases that don't affect core functionality
-- Tests that duplicate other tests at a different level
-
-**Format for each test entry in `TESTS.md`:**
-```
-- **test_name:** [What to do] → [Expected result]
-```
-The description must be specific enough for Claude Code to generate a verification script without guessing. Include concrete inputs and expected outputs where possible.
-
-**When a scope is marked `[DONE]`:**
-1. Review its acceptance criteria and select which ones qualify as critical-path.
-2. Add those to `TESTS.md` with concrete test descriptions.
-3. If the scope modifies behavior covered by an existing entry in `TESTS.md`, update that entry.
+`TESTS.md` is the curated regression test registry — critical-path tests only. When a scope is marked `[DONE]`, add its qualifying acceptance criteria to `TESTS.md`.
 
 **When to run regression tests:**
-- Before merging any branch to `main`.
-- Before deploying to prod (if applicable).
-- Regression tests are always run against the `dev` environment.
-
-**How to run regression tests:**
-- Read `TESTS.md`, generate verification scripts for each entry, execute them, and report results.
-- If any regression test fails, do not merge or deploy.
+- Before merging `dev` into `tst` (i.e., after all scopes are complete).
+- Before deploying to any target.
+- Delegate to the `tester` agent. If any fail, do not merge or deploy.
 
 ---
 
@@ -220,7 +296,7 @@ The description must be specific enough for Claude Code to generate a verificati
 ## Documentation
 
 - Document all APIs as part of the task that implements them. REST APIs must use OpenAPI.
-- At the end of each scope, update `docs/System/` to reflect the current state of the system. The following files must be kept up to date:
+- At the end of each scope, delegate documentation updates to the `doc-updater` agent. The following files must be kept up to date:
   - `workflows.md`
     - A set of Mermaid diagrams covering the main workflows and interactions:
     - `flowchart` for process flows and decision logic
@@ -235,4 +311,3 @@ The description must be specific enough for Claude Code to generate a verificati
     - Use `erDiagram` for databases.
     - Include field types and key relationships
 - For every schema change, create a migration and rollback script in `docs/System/migrations/`, named `YYYYMMDD_short_description.sql`.
-- Use sub-agents for documentation.
