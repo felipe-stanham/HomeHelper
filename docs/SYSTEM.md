@@ -24,3 +24,20 @@ HomeHelper is a unified home automation platform for Raspberry Pi 5 (8GB RAM) th
 | ID      | Name            | Status      | Summary                                              |
 |---------|-----------------|-------------|------------------------------------------------------|
 | P-0001  | HomeHelper Core | [DONE]      | Full platform: core infra, app/service/UI management, dashboard, deployment |
+| P-0002  | Latarnia        | [ACTIVE]    | Platform rename + evolved manifests, Postgres, MCP gateway, Redis Streams, web UI proxy |
+
+## Deployment
+
+### Procedure
+1. Run regression tests (`TESTS.md`) — all must pass
+2. Build the project for the target environment
+3. Read `.deploy-secrets` for the target
+4. SSH to the target and deploy
+5. Run smoke tests against the deployed instance
+6. Log the deployment in `DEPLOYMENTS.md`
+
+### Targets
+| Target      | Environments | Description                        |
+|-------------|--------------|------------------------------------|
+| local       | dev          | Developer workstation (macOS)      |
+| homeserver  | dev, tst, prd| Raspberry Pi 5 — self-hosted multi-environment |
