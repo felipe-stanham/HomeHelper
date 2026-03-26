@@ -1,8 +1,8 @@
 """
-App Manager for HomeHelper
+App Manager for Latarnia
 
 Handles application discovery, manifest parsing, and registry management.
-Provides the core functionality for managing HomeHelper applications.
+Provides the core functionality for managing Latarnia applications.
 """
 
 import json
@@ -22,7 +22,7 @@ from .port_manager import PortManager
 
 
 class AppType(str, Enum):
-    """Application types supported by HomeHelper"""
+    """Application types supported by Latarnia"""
     SERVICE = "service"
     STREAMLIT = "streamlit"
 
@@ -55,7 +55,7 @@ class AppInstall(BaseModel):
 
 
 class AppManifest(BaseModel):
-    """Application manifest schema (homehelper.json)"""
+    """Application manifest schema (latarnia.json)"""
     name: str = Field(..., min_length=1, max_length=50)
     type: AppType
     description: str = Field(..., min_length=1, max_length=200)
@@ -146,7 +146,7 @@ class AppRegistry:
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
-        self.logger = logging.getLogger("homehelper.app_registry")
+        self.logger = logging.getLogger("latarnia.app_registry")
         
         # Registry storage (in-memory only)
         self.apps: Dict[str, AppRegistryEntry] = {}
@@ -213,7 +213,7 @@ class AppManager:
         self.config_manager = config_manager
         self.port_manager = port_manager
         self.registry = AppRegistry(config_manager)
-        self.logger = logging.getLogger("homehelper.app_manager")
+        self.logger = logging.getLogger("latarnia.app_manager")
         
         # Apps directory
         self.apps_dir = Path.cwd() / "apps"
@@ -236,10 +236,19 @@ class AppManager:
                 if not app_path.is_dir():
                     continue
                 
-                manifest_file = app_path / "homehelper.json"
+                manifest_file = app_path / "latarnia.json"
                 if not manifest_file.exists():
-                    self.logger.debug(f"No manifest found in {app_path.name}")
-                    continue
+                    # Backward compatibility: accept homehelper.json with deprecation warning
+                    legacy_manifest = app_path / "homehelper.json"
+                    if legacy_manifest.exists():
+                        self.logger.warning(
+                            f"App '{app_path.name}' uses deprecated 'homehelper.json' manifest. "
+                            f"Rename to 'latarnia.json'."
+                        )
+                        manifest_file = legacy_manifest
+                    else:
+                        self.logger.debug(f"No manifest found in {app_path.name}")
+                        continue
                 
                 try:
                     # Parse manifest

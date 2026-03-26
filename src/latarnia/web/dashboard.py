@@ -5,8 +5,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 # Resolve templates directory relative to project root
-# File path: <project_root>/src/homehelper/web/dashboard.py
-# parents[0] = web, parents[1] = homehelper, parents[2] = src
+# File path: <project_root>/src/latarnia/web/dashboard.py
+# parents[0] = web, parents[1] = latarnia, parents[2] = src
 PROJECT_ROOT = Path(__file__).resolve().parents[2].parent
 TEMPLATES_DIR = PROJECT_ROOT / "templates"
 
@@ -17,7 +17,7 @@ router = APIRouter()
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    """Main HomeHelper dashboard page.
+    """Main Latarnia dashboard page.
 
     Data is populated client-side via calls to existing JSON APIs
     (e.g. /health and /api/apps). This keeps the server-side view

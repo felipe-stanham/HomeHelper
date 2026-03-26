@@ -2,7 +2,7 @@
 
 ## Problem
 
-HomeHelper manages app lifecycles and renders a dashboard, but its interaction model is limited to REST calls and dashboard clicks. There is no way for an external client (human or AI) to discover what an app *can do* — only that it's running. Apps cannot communicate asynchronously with guaranteed delivery. Apps that need structured data are stuck with ad-hoc JSON files.
+Latarnia manages app lifecycles and renders a dashboard, but its interaction model is limited to REST calls and dashboard clicks. There is no way for an external client (human or AI) to discover what an app *can do* — only that it's running. Apps cannot communicate asynchronously with guaranteed delivery. Apps that need structured data are stuck with ad-hoc JSON files.
 
 This blocks the next generation of use cases: a CRM populated by a scraper, an agent that reasons across multiple apps, a knowledge base that serves as shared memory. None of these are possible when the platform only knows that apps exist — not what they expose.
 
@@ -15,13 +15,13 @@ This blocks the next generation of use cases: a CRM populated by a scraper, an a
 ## Context & Constraints
 
 ### Business Context
-- Evolved from HomeHelper (P-0001, completed). The existing system is deployed and running on a Raspberry Pi 5.
+- Evolved from Latarnia (P-0001, completed). The existing system is deployed and running on a Raspberry Pi 5.
 - The operator uses Claude Desktop (and potentially other MCP clients) as the primary interaction surface beyond the dashboard.
 - This is a solo/small-team project. Complexity must stay manageable.
 
 ### Existing Systems
-- **HomeHelper core** (FastAPI, systemd, Redis pub/sub, Bootstrap 5 dashboard) — all retained.
-- **App contract** (`homehelper.json`, `/health`, `/ui`, REST API pattern) — extended, not replaced.
+- **Latarnia core** (FastAPI, systemd, Redis pub/sub, Bootstrap 5 dashboard) — all retained.
+- **App contract** (`latarnia.json`, `/health`, `/ui`, REST API pattern) — extended, not replaced.
 - **Redis** — gains Streams for app→app communication. Existing pub/sub retained for platform events only.
 - **Postgres** — must be pre-installed on the target machine. Platform assumes superuser access for provisioning.
 
@@ -30,14 +30,14 @@ This blocks the next generation of use cases: a CRM populated by a scraper, an a
 - Python 3.9+ runtime.
 - Postgres must be pre-existing and accessible. Platform does not install or manage Postgres itself.
 - MCP protocol compliance required for external client compatibility.
-- Backward compatibility: existing HomeHelper apps (no MCP, no DB, no Streams) must continue to work unchanged.
-- Platform name changes from HomeHelper → **Latarnia** (file paths, service names, dashboard branding).
+- Backward compatibility: existing Latarnia apps (no MCP, no DB, no Streams) must continue to work unchanged.
+- Platform name changes from Latarnia → **Latarnia** (file paths, service names, dashboard branding).
 
 ---
 
 ## Proposed Solution (High-Level)
 
-Latarnia evolves HomeHelper into a general-purpose mini-app platform where apps can declare typed tool surfaces (MCP), communicate asynchronously (Redis Streams), and use managed databases (Postgres). The platform acts as infrastructure — lifecycle, routing, discovery — not reasoning.
+Latarnia evolves Latarnia into a general-purpose mini-app platform where apps can declare typed tool surfaces (MCP), communicate asynchronously (Redis Streams), and use managed databases (Postgres). The platform acts as infrastructure — lifecycle, routing, discovery — not reasoning.
 
 ### Main Actors
 - **Platform Operator**: Installs/manages apps, uses the dashboard for monitoring.
@@ -46,8 +46,8 @@ Latarnia evolves HomeHelper into a general-purpose mini-app platform where apps 
 
 ### Capabilities
 
-- **cap-001**: Platform rename (HomeHelper → Latarnia) across file paths, service names, config, dashboard, and systemd units.
-- **cap-002**: Evolved app manifest — add `database`, `mcp_server`, `mcp_port`, `has_web_ui`, `redis_streams_publish`, `redis_streams_subscribe`, and `requires` fields to `homehelper.json` (renamed to `latarnia.json`). Existing fields remain, new fields are optional.
+- **cap-001**: Platform rename (Latarnia → Latarnia) across file paths, service names, config, dashboard, and systemd units.
+- **cap-002**: Evolved app manifest — add `database`, `mcp_server`, `mcp_port`, `has_web_ui`, `redis_streams_publish`, `redis_streams_subscribe`, and `requires` fields to `latarnia.json` (renamed to `latarnia.json`). Existing fields remain, new fields are optional.
 - **cap-003**: Centralized Postgres provisioning — on first discovery of an app with `database: true`, create an isolated Postgres database and a dedicated role. Inject `--db-url` at app launch. Track provisioned databases in the platform registry.
 - **cap-004**: Mandatory migration system — apps with `database: true` must ship a `migrations/` directory with ordered SQL files. Platform runs pending migrations on first discovery and on version bump. Track applied migrations in a `schema_versions` table per app database. Migration failure halts the app and logs an error; no auto-rollback.
 - **cap-005**: App-side MCP server — apps that declare `mcp_server: true` run an HTTP-based MCP server on their declared `mcp_port`. The platform does not implement the MCP server for the app; the app owns it entirely.
@@ -62,8 +62,8 @@ Latarnia evolves HomeHelper into a general-purpose mini-app platform where apps 
 
 ## Acceptance Criteria
 
-- **cap-001**: All references to "HomeHelper" in file paths, config files, systemd unit names, dashboard title/branding, and CLI output are replaced with "Latarnia". Existing apps continue to function after rename. `homehelper.json` manifest files are accepted with a deprecation warning; `latarnia.json` is the canonical name.
-- **cap-002**: An app with only the existing manifest fields (no new fields) is discovered and runs identically to HomeHelper behavior. An app with the new fields (`database`, `mcp_server`, etc.) is parsed correctly and the values are available in the registry.
+- **cap-001**: All references to "Latarnia" in file paths, config files, systemd unit names, dashboard title/branding, and CLI output are replaced with "Latarnia". Existing apps continue to function after rename. `latarnia.json` manifest files are accepted with a deprecation warning; `latarnia.json` is the canonical name.
+- **cap-002**: An app with only the existing manifest fields (no new fields) is discovered and runs identically to Latarnia behavior. An app with the new fields (`database`, `mcp_server`, etc.) is parsed correctly and the values are available in the registry.
 - **cap-003**: When an app with `database: true` is first discovered, a new Postgres database named `latarnia_{app_name}` is created with a dedicated role `latarnia_{app_name}_role`. The role has CONNECT privilege only on its own database. The connection string is passed to the app as `--db-url` at launch. The database and role are recorded in the platform registry.
 - **cap-004**: On first discovery of an app with `database: true` and a `migrations/` directory, all migration files are executed in order. A `schema_versions` table is created in the app's database tracking each applied migration. On version bump, only pending migrations run. If any migration fails, the app is NOT started and an error is logged with the failing migration file and Postgres error message. No partial state is left behind (migration runs in a transaction).
 - **cap-005**: An app with `mcp_server: true` and `mcp_port: 9001` is expected to respond to MCP protocol requests on port 9001 after startup. The platform health check includes an MCP endpoint liveness probe after the standard `/health` check passes.
@@ -238,7 +238,7 @@ flowchart TD
 
 ### Open Questions
 1. **MCP transport version**: Should the gateway use SSE-based transport or the newer Streamable HTTP? Decision needed before implementation. Recommend going with whatever the `mcp` Python SDK supports best at implementation time.
-2. **Platform name in manifest**: Should the manifest file be renamed from `homehelper.json` to `latarnia.json` immediately, or support both with deprecation? Recommend: accept both, prefer `latarnia.json`, log deprecation warning for `homehelper.json`.
+2. **Platform name in manifest**: Should the manifest file be renamed from `latarnia.json` to `latarnia.json` immediately, or support both with deprecation? Recommend: accept both, prefer `latarnia.json`, log deprecation warning for `latarnia.json`.
 3. **Port allocation for MCP**: Apps currently get a single port (8100-8199) for REST. MCP needs a second port. Should MCP ports come from a separate range (e.g., 9001-9099), or should the app multiplex REST and MCP on the same port? Recommend: separate range, declared in manifest.
 
 ---

@@ -14,12 +14,12 @@ from datetime import datetime
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from homehelper.core.config import ConfigManager
-from homehelper.managers.app_manager import (
+from latarnia.core.config import ConfigManager
+from latarnia.managers.app_manager import (
     AppManager, AppRegistry, AppRegistryEntry, AppManifest, 
     AppType, AppStatus, AppRuntimeInfo
 )
-from homehelper.managers.port_manager import PortManager
+from latarnia.managers.port_manager import PortManager
 
 
 class TestAppManifest:
@@ -418,7 +418,7 @@ class TestAppManager:
             "main_file": "app.py"
         }
         
-        manifest_file = app_dir / "homehelper.json"
+        manifest_file = app_dir / "latarnia.json"
         with open(manifest_file, 'w') as f:
             json.dump(manifest_data, f)
         
@@ -447,7 +447,7 @@ class TestAppManager:
             # Missing type, description, version, author, main_file
         }
         
-        manifest_file = app_dir / "homehelper.json"
+        manifest_file = app_dir / "latarnia.json"
         with open(manifest_file, 'w') as f:
             json.dump(manifest_data, f)
         
@@ -473,7 +473,7 @@ class TestAppManager:
             "main_file": "nonexistent.py"
         }
         
-        manifest_file = app_dir / "homehelper.json"
+        manifest_file = app_dir / "latarnia.json"
         with open(manifest_file, 'w') as f:
             json.dump(manifest_data, f)
         
@@ -501,7 +501,7 @@ class TestAppManager:
             "requirements": "requirements.txt"
         }
         
-        (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
+        (app_dir / "latarnia.json").write_text(json.dumps(manifest_data))
         (app_dir / "app.py").write_text("# Main file")
         (app_dir / "requirements.txt").write_text("requests==2.28.0")
         
@@ -537,7 +537,7 @@ class TestAppManager:
             "main_file": "app.py"
         }
         
-        (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
+        (app_dir / "latarnia.json").write_text(json.dumps(manifest_data))
         (app_dir / "app.py").write_text("# Main file")
         (app_dir / "requirements.txt").write_text("nonexistent-package==999.999.999")
         
@@ -573,7 +573,7 @@ class TestAppManager:
             "main_file": "app.py"
         }
         
-        (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
+        (app_dir / "latarnia.json").write_text(json.dumps(manifest_data))
         (app_dir / "app.py").write_text("# Main file")
         
         # Discover app
@@ -615,7 +615,7 @@ class TestAppManager:
                 "main_file": "app.py"
             }
             
-            (app_dir / "homehelper.json").write_text(json.dumps(manifest_data))
+            (app_dir / "latarnia.json").write_text(json.dumps(manifest_data))
             (app_dir / "app.py").write_text("# Main")
         
         app_manager.discover_apps()

@@ -1,3 +1,3 @@
 """
-Test suite for HomeHelper
+Test suite for Latarnia
 """

@@ -2,11 +2,11 @@
 
 {% block content %}
   <div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="h3 mb-0">HomeHelper Dashboard</h1>
+    <h1 class="h3 mb-0">Latarnia Dashboard</h1>
     <div class="text-end">
       <button id="hh-refresh-all" class="btn btn-outline-primary btn-sm">🔄 Refresh</button>
-      <button onclick="viewHomeHelperLogs()" class="btn btn-outline-secondary btn-sm">📋 HomeHelper Logs</button>
-      <button onclick="restartHomeHelper()" class="btn btn-outline-warning btn-sm">🔄 Restart HomeHelper</button>
+      <button onclick="viewLatarniaLogs()" class="btn btn-outline-secondary btn-sm">📋 Latarnia Logs</button>
+      <button onclick="restartLatarnia()" class="btn btn-outline-warning btn-sm">🔄 Restart Latarnia</button>
       <small class="text-muted d-block">Last Updated: <span id="hh-last-updated">--:--</span></small>
     </div>
   </div>
@@ -500,19 +500,19 @@
     }
   }
   
-  async function viewHomeHelperLogs() {
+  async function viewLatarniaLogs() {
     currentLogAppId = null;  // Clear app-specific log ID
-    currentLogAppName = 'HomeHelper';
+    currentLogAppName = 'Latarnia';
     
     const modal = new bootstrap.Modal(document.getElementById('logViewerModal'));
-    document.getElementById('logViewerModalLabel').textContent = 'HomeHelper - Main Application Logs';
+    document.getElementById('logViewerModalLabel').textContent = 'Latarnia - Main Application Logs';
     modal.show();
     
     const logContent = document.getElementById('logContent');
     logContent.innerHTML = '<code>Loading logs...</code>';
     
     try {
-      const response = await fetchJson('/api/logs/homehelper?lines=100');
+      const response = await fetchJson('/api/logs/latarnia?lines=100');
       const logs = response.data?.logs || [];
       
       if (logs.length === 0) {
@@ -527,19 +527,19 @@
     }
   }
   
-  async function restartHomeHelper() {
-    if (!confirm('Are you sure you want to restart HomeHelper? All apps will be restarted.')) {
+  async function restartLatarnia() {
+    if (!confirm('Are you sure you want to restart Latarnia? All apps will be restarted.')) {
       return;
     }
     
     try {
       await fetch('/api/system/restart', { method: 'POST' });
-      alert('HomeHelper restart initiated. The page will reload in 5 seconds...');
+      alert('Latarnia restart initiated. The page will reload in 5 seconds...');
       setTimeout(() => {
         window.location.reload();
       }, 5000);
     } catch (err) {
-      alert(`Failed to restart HomeHelper: ${err.message}`);
+      alert(`Failed to restart Latarnia: ${err.message}`);
     }
   }
   

@@ -1,5 +1,5 @@
 """
-Main FastAPI application for HomeHelper
+Main FastAPI application for Latarnia
 """
 import logging
 from contextlib import asynccontextmanager
@@ -8,11 +8,11 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
-from homehelper.core.config import config_manager
-from homehelper.core.redis_client import RedisHealthMonitor
-from homehelper.core.event_subscriber import RedisEventSubscriber
-from homehelper.utils.system_monitor import SystemMonitor
-from homehelper.web.dashboard import router as dashboard_router
+from latarnia.core.config import config_manager
+from latarnia.core.redis_client import RedisHealthMonitor
+from latarnia.core.event_subscriber import RedisEventSubscriber
+from latarnia.utils.system_monitor import SystemMonitor
+from latarnia.web.dashboard import router as dashboard_router
 
 
 # Initialize logging
@@ -26,7 +26,7 @@ def setup_logging():
         handlers=[
             logging.StreamHandler(),
             logging.FileHandler(
-                config_manager.get_logs_dir() / "homehelper-main.log"
+                config_manager.get_logs_dir() / "latarnia-main.log"
             )
         ]
     )
@@ -41,8 +41,8 @@ async def lifespan(app: FastAPI):
     config_manager.get_logs_dir().mkdir(parents=True, exist_ok=True)
     
     setup_logging()
-    logger = logging.getLogger("homehelper.main")
-    logger.info("Starting HomeHelper main application")
+    logger = logging.getLogger("latarnia.main")
+    logger.info("Starting Latarnia main application")
     
     # Auto-start Redis if not running
     logger.info("Checking Redis status...")
@@ -87,12 +87,12 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Redis event subscriber...")
     event_subscriber.start()
     
-    logger.info("HomeHelper main application started successfully")
+    logger.info("Latarnia main application started successfully")
     
     yield
     
     # Shutdown
-    logger.info("Shutting down HomeHelper main application")
+    logger.info("Shutting down Latarnia main application")
     logger.info("Stopping Redis event subscriber...")
     event_subscriber.stop()
     logger.info("Stopping all managed service apps...")
@@ -126,7 +126,7 @@ streamlit_manager = StreamlitManager(config_manager, app_manager, port_manager)
 
 # Create FastAPI app
 app = FastAPI(
-    title="HomeHelper",
+    title="Latarnia",
     description="Unified home automation platform for Raspberry Pi",
     version="0.1.0",
     lifespan=lifespan
@@ -139,7 +139,7 @@ app.include_router(dashboard_router)
 @app.get("/")
 async def root():
     """Root endpoint"""
-    return {"message": "HomeHelper is running", "version": "0.1.0"}
+    return {"message": "Latarnia is running", "version": "0.1.0"}
 
 
 @app.get("/health")
@@ -193,7 +193,7 @@ async def health_check():
         }
         
     except Exception as e:
-        logging.getLogger("homehelper.main").error(f"Health check failed: {e}")
+        logging.getLogger("latarnia.main").error(f"Health check failed: {e}")
         return JSONResponse(
             status_code=500,
             content={
@@ -545,7 +545,7 @@ async def get_app_logs(app_id: str, lines: int = 100):
         log_files = [
             logs_dir / f"{app_id}.log",
             logs_dir / f"{app_id}-streamlit.log",
-            logs_dir / f"homehelper-{app_id}.log"
+            logs_dir / f"latarnia-{app_id}.log"
         ]
         
         log_lines = []
@@ -573,13 +573,13 @@ async def get_app_logs(app_id: str, lines: int = 100):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/logs/homehelper")
-async def get_homehelper_logs(lines: int = 100):
-    """Get recent HomeHelper main application logs"""
+@app.get("/api/logs/latarnia")
+async def get_latarnia_logs(lines: int = 100):
+    """Get recent Latarnia main application logs"""
     try:
         from pathlib import Path
         
-        log_file = config_manager.get_logs_dir() / "homehelper-main.log"
+        log_file = config_manager.get_logs_dir() / "latarnia-main.log"
         
         if not log_file.exists():
             return {"success": True, "data": {"logs": [], "lines": 0, "message": "Log file not found"}}
@@ -595,11 +595,11 @@ async def get_homehelper_logs(lines: int = 100):
             return {"success": True, "data": {"logs": log_lines, "lines": len(log_lines)}}
             
         except Exception as e:
-            logger.error(f"Failed to read HomeHelper log file: {e}")
+            logger.error(f"Failed to read Latarnia log file: {e}")
             raise HTTPException(status_code=500, detail=str(e))
         
     except Exception as e:
-        logger.error(f"Failed to get HomeHelper logs: {e}")
+        logger.error(f"Failed to get Latarnia logs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -617,7 +617,7 @@ async def get_recent_activity(limit: int = 10):
         activities = []
         
         # Get events from the recent events list (stored by background subscriber)
-        events_key = "homehelper:events:recent"
+        events_key = "latarnia:events:recent"
         
         # Get the latest events
         total_events = redis_client.llen(events_key)
@@ -989,13 +989,13 @@ async def get_app_process_info(app_id: str):
 
 
 @app.post("/api/system/restart")
-async def restart_homehelper():
-    """Restart HomeHelper application"""
+async def restart_latarnia():
+    """Restart Latarnia application"""
     try:
         import os
         import sys
         
-        logger.info("HomeHelper restart requested via API")
+        logger.info("Latarnia restart requested via API")
         
         # Trigger a restart by exiting with a special code
         # The process supervisor (systemd, launchd, etc.) should restart it
@@ -1005,7 +1005,7 @@ async def restart_homehelper():
         return {"success": True, "message": "Restart initiated"}
         
     except Exception as e:
-        logger.error(f"Failed to restart HomeHelper: {e}")
+        logger.error(f"Failed to restart Latarnia: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1080,7 +1080,7 @@ if __name__ == "__main__":
     
     config = config_manager.config
     uvicorn.run(
-        "homehelper.main:app",
+        "latarnia.main:app",
         host=config.system.host,
         port=config.system.main_port,
         reload=True,

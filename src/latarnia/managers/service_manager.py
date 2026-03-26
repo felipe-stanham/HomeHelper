@@ -1,5 +1,5 @@
 """
-Service Manager for HomeHelper
+Service Manager for Latarnia
 
 Handles systemd service integration, lifecycle management, and health monitoring.
 Provides systemd service template generation and process monitoring capabilities.
@@ -81,7 +81,7 @@ class ServiceManager:
     def __init__(self, config_manager: ConfigManager, app_manager: AppManager):
         self.config_manager = config_manager
         self.app_manager = app_manager
-        self.logger = logging.getLogger("homehelper.service_manager")
+        self.logger = logging.getLogger("latarnia.service_manager")
         
         # Service tracking
         self.services: Dict[str, ServiceInfo] = {}
@@ -91,7 +91,7 @@ class ServiceManager:
         self.systemd_user_dir.mkdir(parents=True, exist_ok=True)
         
         # Service name prefix
-        self.service_prefix = "homehelper-"
+        self.service_prefix = "latarnia-"
     
     def generate_service_template(self, app_id: str) -> Optional[str]:
         """
@@ -150,7 +150,7 @@ class ServiceManager:
         
         # Generate service template
         service_template = f"""[Unit]
-Description=HomeHelper Service - {app.manifest.name}
+Description=Latarnia Service - {app.manifest.name}
 After=network.target
 Wants=network.target
 

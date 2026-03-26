@@ -4,7 +4,7 @@
 
 Latarnia uses a hybrid storage approach:
 
-- **Platform configuration**: JSON files (unchanged from HomeHelper)
+- **Platform configuration**: JSON files (unchanged from Latarnia)
 - **Platform registry**: JSON persistence with in-memory operations (unchanged, extended with new fields)
 - **Platform events**: Redis pub/sub (unchanged)
 - **App→App communication**: Redis Streams (new)
@@ -247,7 +247,7 @@ erDiagram
 Platform events continue to use pub/sub. These channels are NOT migrated to Streams.
 
 ```
-latarnia:events              # General system events (renamed from homehelper:events)
+latarnia:events              # General system events (renamed from latarnia:events)
 latarnia:events:*            # App-specific platform events
 latarnia:health              # Health check events
 latarnia:metrics             # System metrics
@@ -337,7 +337,7 @@ classDiagram
 ├── src/latarnia/                        # Application code (renamed)
 ├── apps/                                # Discovered applications
 │   └── crm/
-│       ├── latarnia.json               # Manifest (or homehelper.json with deprecation)
+│       ├── latarnia.json               # Manifest (or latarnia.json with deprecation)
 │       ├── requirements.txt
 │       ├── app.py                       # Main entry point
 │       ├── mcp_server.py               # MCP server (if mcp_server: true)

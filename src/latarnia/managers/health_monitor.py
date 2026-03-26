@@ -1,5 +1,5 @@
 """
-Health Monitor for HomeHelper
+Health Monitor for Latarnia
 
 Handles periodic health checks for service applications and tracks health status.
 Provides configurable health check intervals and failure tracking.
@@ -71,7 +71,7 @@ class HealthMonitor:
         self.config_manager = config_manager
         self.app_manager = app_manager
         self.service_manager = service_manager
-        self.logger = logging.getLogger("homehelper.health_monitor")
+        self.logger = logging.getLogger("latarnia.health_monitor")
         
         # Health check configuration
         self.config = HealthCheckConfig()

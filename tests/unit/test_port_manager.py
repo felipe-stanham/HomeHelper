@@ -14,8 +14,8 @@ from datetime import datetime, timedelta
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from homehelper.core.config import ConfigManager
-from homehelper.managers.port_manager import PortManager, PortAllocation
+from latarnia.core.config import ConfigManager
+from latarnia.managers.port_manager import PortManager, PortAllocation
 
 
 class TestPortManager:

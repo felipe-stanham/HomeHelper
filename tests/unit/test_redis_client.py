@@ -7,7 +7,7 @@ import time
 from unittest.mock import patch, MagicMock
 import redis
 
-from homehelper.core.redis_client import RedisMessageBusClient, RedisHealthMonitor
+from latarnia.core.redis_client import RedisMessageBusClient, RedisHealthMonitor
 
 
 class TestRedisMessageBusClient:
@@ -90,8 +90,8 @@ class TestRedisMessageBusClient:
         specific_channel_call = calls[0]
         all_events_call = calls[1]
         
-        assert specific_channel_call[0][0] == "homehelper:events:test_event"
-        assert all_events_call[0][0] == "homehelper:events:all"
+        assert specific_channel_call[0][0] == "latarnia:events:test_event"
+        assert all_events_call[0][0] == "latarnia:events:all"
         
         # Parse and check message content
         message_data = json.loads(specific_channel_call[0][1])
@@ -120,8 +120,8 @@ class TestRedisMessageBusClient:
         result = self.client.subscribe("test_event", callback)
         
         assert result is True
-        self.client.pubsub.subscribe.assert_called_once_with("homehelper:events:test_event")
-        assert "homehelper:events:test_event" in self.client._subscriptions
+        self.client.pubsub.subscribe.assert_called_once_with("latarnia:events:test_event")
+        assert "latarnia:events:test_event" in self.client._subscriptions
     
     def test_subscribe_not_connected(self):
         """Test subscription when not connected"""
@@ -138,13 +138,13 @@ class TestRedisMessageBusClient:
         self.client.redis = MagicMock()
         self.client.redis.ping.return_value = True
         self.client.pubsub = MagicMock()
-        self.client._subscriptions["homehelper:events:test_event"] = MagicMock()
+        self.client._subscriptions["latarnia:events:test_event"] = MagicMock()
         
         result = self.client.unsubscribe("test_event")
         
         assert result is True
-        self.client.pubsub.unsubscribe.assert_called_once_with("homehelper:events:test_event")
-        assert "homehelper:events:test_event" not in self.client._subscriptions
+        self.client.pubsub.unsubscribe.assert_called_once_with("latarnia:events:test_event")
+        assert "latarnia:events:test_event" not in self.client._subscriptions
     
     def test_get_health_connected(self):
         """Test health check when connected"""
@@ -217,8 +217,8 @@ class TestRedisHealthMonitor:
             'keyspace_misses': 100
         }
         mock_redis_instance.pubsub_channels.return_value = [
-            b'homehelper:events:test1',
-            b'homehelper:events:test2'
+            b'latarnia:events:test1',
+            b'latarnia:events:test2'
         ]
         mock_redis.return_value = mock_redis_instance
         
@@ -234,8 +234,8 @@ class TestRedisHealthMonitor:
         assert metrics["stats"]["keyspace_hits"] == 1000
         assert metrics["stats"]["keyspace_misses"] == 100
         assert len(metrics["channels"]) == 2
-        assert "homehelper:events:test1" in metrics["channels"]
-        assert "homehelper:events:test2" in metrics["channels"]
+        assert "latarnia:events:test1" in metrics["channels"]
+        assert "latarnia:events:test2" in metrics["channels"]
     
     @patch('redis.from_url')
     def test_get_redis_metrics_failure(self, mock_redis):

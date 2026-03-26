@@ -14,7 +14,7 @@ class UIRenderer:
     """Renders service app UIs from REST API endpoints"""
     
     def __init__(self):
-        self.logger = logging.getLogger("homehelper.ui_renderer")
+        self.logger = logging.getLogger("latarnia.ui_renderer")
     
     async def discover_ui_resources(self, base_url: str) -> Optional[List[str]]:
         """

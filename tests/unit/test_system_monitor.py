@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import patch, mock_open, MagicMock
 import psutil
 
-from homehelper.utils.system_monitor import SystemMonitor
+from latarnia.utils.system_monitor import SystemMonitor
 
 
 class TestSystemMonitor:
@@ -144,7 +144,7 @@ class TestSystemMonitor:
     def test_get_processes_by_name(self, mock_process_iter):
         """Test finding processes by name pattern"""
         mock_proc1 = MagicMock()
-        mock_proc1.info = {'pid': 1234, 'name': 'homehelper-main'}
+        mock_proc1.info = {'pid': 1234, 'name': 'latarnia-main'}
         
         mock_proc2 = MagicMock()
         mock_proc2.info = {'pid': 5678, 'name': 'other_process'}
@@ -152,9 +152,9 @@ class TestSystemMonitor:
         mock_process_iter.return_value = [mock_proc1, mock_proc2]
         
         with patch.object(self.monitor, 'get_process_metrics') as mock_get_metrics:
-            mock_get_metrics.return_value = {'pid': 1234, 'name': 'homehelper-main'}
+            mock_get_metrics.return_value = {'pid': 1234, 'name': 'latarnia-main'}
             
-            processes = self.monitor.get_processes_by_name("homehelper")
+            processes = self.monitor.get_processes_by_name("latarnia")
             
             assert len(processes) == 1
             assert processes[0]['pid'] == 1234

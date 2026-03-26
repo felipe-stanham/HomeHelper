@@ -1,10 +1,10 @@
-# HomeHelper - Unified Home Automation Platform
+# Latarnia - Unified Home Automation Platform
 
-HomeHelper is a unified home automation platform designed to run on Raspberry Pi 5 (8GB RAM) that manages multiple independent applications through a single FastAPI-based web dashboard.
+Latarnia is a unified home automation platform designed to run on Raspberry Pi 5 (8GB RAM) that manages multiple independent applications through a single FastAPI-based web dashboard.
 
 ## Overview
 
-HomeHelper provides a centralized management system for home automation applications while maintaining complete independence between apps. It supports two types of applications:
+Latarnia provides a centralized management system for home automation applications while maintaining complete independence between apps. It supports two types of applications:
 
 - **Service Apps**: Long-running background services with REST APIs
 - **Streamlit Apps**: On-demand interactive UIs with TTL management
@@ -31,10 +31,10 @@ The system follows a modular architecture with these core components:
 ## Project Structure
 
 ```
-/opt/homehelper/
+/opt/latarnia/
 ├── config/
 │   └── config.json              # Main configuration file
-├── src/homehelper/
+├── src/latarnia/
 │   ├── core/                    # Core infrastructure
 │   │   ├── config.py           # Configuration management
 │   │   └── redis_client.py     # Redis message bus client
@@ -81,7 +81,7 @@ The system follows a modular architecture with these core components:
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd HomeHelper
+cd Latarnia
 ```
 
 2. Install dependencies:
@@ -98,7 +98,7 @@ pip install -r requirements.txt
 4. Run the application:
 ```bash
 cd src
-python -m homehelper.main
+python -m latarnia.main
 ```
 
 5. Access the dashboard:
@@ -122,8 +122,8 @@ The main configuration is stored in `config/config.json`:
     "host": "0.0.0.0"
   },
   "process_manager": {
-    "data_dir": "/opt/homehelper/data",
-    "logs_dir": "/opt/homehelper/logs",
+    "data_dir": "/opt/latarnia/data",
+    "logs_dir": "/opt/latarnia/logs",
     "port_range": {
       "start": 8100,
       "end": 8199
@@ -132,7 +132,7 @@ The main configuration is stored in `config/config.json`:
 }
 ```
 
-Configuration can be overridden using environment variables with the `HOMEHELPER_` prefix.
+Configuration can be overridden using environment variables with the `LATARNIA_` prefix.
 
 ## API Endpoints
 
@@ -157,7 +157,7 @@ Configuration can be overridden using environment variables with the `HOMEHELPER
 python -m pytest tests/unit/ -v
 
 # Run with coverage
-python -m pytest tests/unit/ --cov=homehelper --cov-report=html
+python -m pytest tests/unit/ --cov=latarnia --cov-report=html
 ```
 
 ### Project Planning
@@ -171,7 +171,7 @@ This project follows the ShapeUp methodology. See `Projects/P-001.md` for detail
 
 ## App Development
 
-Apps are discovered automatically from the `apps/` directory. Each app must include a `homehelper.json` manifest file. See `docs/app-specification.md` for detailed requirements.
+Apps are discovered automatically from the `apps/` directory. Each app must include a `latarnia.json` manifest file. See `docs/app-specification.md` for detailed requirements.
 
 ### Service App Example
 ```json
@@ -203,7 +203,7 @@ Apps are discovered automatically from the `apps/` directory. Each app must incl
 
 ## Monitoring
 
-HomeHelper provides comprehensive system monitoring:
+Latarnia provides comprehensive system monitoring:
 
 - **Hardware Metrics**: CPU usage, memory, disk space, temperature
 - **Process Monitoring**: App status, resource usage, health checks

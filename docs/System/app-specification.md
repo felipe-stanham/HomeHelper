@@ -1,8 +1,8 @@
-# HomeHelper: App Specification
+# Latarnia: App Specification
 
 ## Overview
 
-This specification defines the requirements for apps that integrate with the HomeHelper system. Apps can be of two types: **Service Apps** and **Streamlit Apps**.
+This specification defines the requirements for apps that integrate with the Latarnia system. Apps can be of two types: **Service Apps** and **Streamlit Apps**.
 
 ## App Types
 
@@ -21,13 +21,13 @@ This specification defines the requirements for apps that integrate with the Hom
 ## Common Requirements
 
 All apps must have the following files in their root directory:
-- **homehelper.json**: App manifest file
+- **latarnia.json**: App manifest file
 - **requirements.txt**: Python dependencies
 - **app.py**: Main entry point for service apps
 
-### App Manifest (homehelper.json)
+### App Manifest (latarnia.json)
 
-Each app must include a `homehelper.json` file in its root directory:
+Each app must include a `latarnia.json` file in its root directory:
 
 ```json
 {
@@ -46,7 +46,7 @@ Each app must include a `homehelper.json` file in its root directory:
   },
   "install": {
     "setup_commands": [
-      "mkdir -p /opt/homehelper/data/camera_detection"
+      "mkdir -p /opt/latarnia/data/camera_detection"
     ]
   }
 }
@@ -216,7 +216,7 @@ All endpoints must return standard HTTP status codes with JSON error responses:
 ## Redis Integration
 
 ### Overview
-HomeHelper uses Redis as a message bus for inter-app communication and event publishing. Apps can publish events and subscribe to events from other apps.
+Latarnia uses Redis as a message bus for inter-app communication and event publishing. Apps can publish events and subscribe to events from other apps.
 
 ### Connection
 Apps receive Redis connection via `--redis-url` parameter when `redis_required: true` in manifest.
@@ -237,7 +237,7 @@ All Redis messages follow this standard format:
 ```
 
 ### Publishing Events
-**Channel Pattern**: `homehelper:events:{event_type}`
+**Channel Pattern**: `latarnia:events:{event_type}`
 
 **Example Event Types**:
 - `motion.detected` - Motion sensor triggered
@@ -264,11 +264,11 @@ event = {
     }
 }
 
-r.publish("homehelper:events:motion.detected", json.dumps(event))
+r.publish("latarnia:events:motion.detected", json.dumps(event))
 ```
 
 ### Subscribing to Events
-**Channel Pattern**: `homehelper:events:*` or `homehelper:events:{specific_event}`
+**Channel Pattern**: `latarnia:events:*` or `latarnia:events:{specific_event}`
 
 **Python Example**:
 ```python
@@ -279,10 +279,10 @@ r = redis.from_url(redis_url)
 pubsub = r.pubsub()
 
 # Subscribe to all events
-pubsub.subscribe("homehelper:events:*")
+pubsub.subscribe("latarnia:events:*")
 
 # Or subscribe to specific events
-pubsub.subscribe("homehelper:events:motion.detected")
+pubsub.subscribe("latarnia:events:motion.detected")
 
 for message in pubsub.listen():
     if message['type'] == 'message':
@@ -293,7 +293,7 @@ for message in pubsub.listen():
 
 ### Event Declaration in Manifest
 
-Apps should declare the events they publish and subscribe to in their `homehelper.json` manifest. This provides self-documentation, enables validation, and helps with debugging.
+Apps should declare the events they publish and subscribe to in their `latarnia.json` manifest. This provides self-documentation, enables validation, and helps with debugging.
 
 **Example**:
 ```json
@@ -402,12 +402,12 @@ For **subscribes**:
 ## Data and Logs Directories
 
 ### Overview
-HomeHelper provides dedicated directories for each app to store persistent data and logs. These directories are managed by the main system and backed up automatically.
+Latarnia provides dedicated directories for each app to store persistent data and logs. These directories are managed by the main system and backed up automatically.
 
 ### Data Directory (`--data-dir`)
 **Purpose**: Store persistent application data that needs to survive app restarts
 
-**Path Format**: `/opt/homehelper/data/{app_name}/`
+**Path Format**: `/opt/latarnia/data/{app_name}/`
 
 **Use Cases**:
 - Database files (SQLite, JSON, etc.)
@@ -443,7 +443,7 @@ with open(config_file, 'r') as f:
 ### Logs Directory (`--logs-dir`)
 **Purpose**: Store application logs for debugging and monitoring
 
-**Path Format**: `/opt/homehelper/logs/{app_name}/`
+**Path Format**: `/opt/latarnia/logs/{app_name}/`
 
 **Use Cases**:
 - Application logs
@@ -482,7 +482,7 @@ logger.info("Application started")
 ```
 
 ### Directory Management
-- Directories are created by HomeHelper during app installation
+- Directories are created by Latarnia during app installation
 - Apps should create subdirectories as needed
 - Apps must handle missing directories gracefully
 - Do not hardcode paths - always use provided arguments
@@ -502,21 +502,21 @@ If enabled in the config, the following parameters will be also sent to the app:
 
 **example Service app use**
 ```bash
-python main.py --port 8101 --redis-url redis://localhost:6379 --data-dir /opt/homehelper/data --logs-dir /opt/homehelper/logs
+python main.py --port 8101 --redis-url redis://localhost:6379 --data-dir /opt/latarnia/data --logs-dir /opt/latarnia/logs
 ```
 
 **example Streamlit app use**
 ```bash
-streamlit run app.py --server.port 8501 --redis-url redis://localhost:6379 --data-dir /opt/homehelper/data --logs-dir /opt/homehelper/logs
+streamlit run app.py --server.port 8501 --redis-url redis://localhost:6379 --data-dir /opt/latarnia/data --logs-dir /opt/latarnia/logs
 ```
 
 ## Environment Variables
 
-Apps can access these environment variables set by HomeHelper:
+Apps can access these environment variables set by Latarnia:
 
-- `HOMEHELPER_APP_NAME`: The app's name from manifest
-- `HOMEHELPER_APP_VERSION`: The app's version
-- `HOMEHELPER_CONFIG_PATH`: Path to main HomeHelper config (read-only)
+- `LATARNIA_APP_NAME`: The app's name from manifest
+- `LATARNIA_APP_VERSION`: The app's version
+- `LATARNIA_CONFIG_PATH`: Path to main Latarnia config (read-only)
 - `REDIS_HOST`: Redis server host (if redis_required: true)
 - `REDIS_PORT`: Redis server port (if redis_required: true)
 - `REDIS_PASSWORD`: Redis password if configured (if redis_required: true)
@@ -525,7 +525,7 @@ Apps can access these environment variables set by HomeHelper:
 
 ## Installation Process
 
-1. **Discovery**: Main app scans `./apps/` for `homehelper.json` files
+1. **Discovery**: Main app scans `./apps/` for `latarnia.json` files
 2. **Validation**: Validates manifest format and required fields
 3. **Dependencies**: Installs Python packages from requirements.txt
 4. **Setup**: Runs setup commands from manifest
@@ -537,29 +537,29 @@ Apps can access these environment variables set by HomeHelper:
 ### Systemd Service Template (Service Apps)
 ```ini
 [Unit]
-Description=HomeHelper - {app_name}
-After=homehelper-main.service
-Requires=homehelper-main.service  
-PartOf=homehelper-main.service
+Description=Latarnia - {app_name}
+After=latarnia-main.service
+Requires=latarnia-main.service  
+PartOf=latarnia-main.service
 
 [Service]
 Type=simple
-User=homehelper
-WorkingDirectory=/opt/homehelper/apps/{app_name}
+User=latarnia
+WorkingDirectory=/opt/latarnia/apps/{app_name}
 ExecStart=/usr/bin/python3 main.py --port {assigned_port}
 Restart={restart_policy}
-Environment=HOMEHELPER_CONFIG_PATH=/etc/homehelper/config.yaml
+Environment=LATARNIA_CONFIG_PATH=/etc/latarnia/config.yaml
 Environment=REDIS_URL=redis://localhost:6379
 
 [Install]
-WantedBy=homehelper-main.service
+WantedBy=latarnia-main.service
 ```
 
 ### Lifecycle Management
-- **Start**: `systemctl start homehelper-{app_name}`
-- **Stop**: `systemctl stop homehelper-{app_name}`
-- **Status**: `systemctl status homehelper-{app_name}`
-- **Logs**: `journalctl -u homehelper-{app_name} -f`
+- **Start**: `systemctl start latarnia-{app_name}`
+- **Stop**: `systemctl stop latarnia-{app_name}`
+- **Status**: `systemctl status latarnia-{app_name}`
+- **Logs**: `journalctl -u latarnia-{app_name} -f`
 
 ## Complete Working Example
 
@@ -569,12 +569,12 @@ Here's a complete, minimal service app that demonstrates all core concepts:
 **Directory Structure**:
 ```
 my_sensor_app/
-├── homehelper.json
+├── latarnia.json
 ├── requirements.txt
 └── app.py
 ```
 
-**homehelper.json**:
+**latarnia.json**:
 ```json
 {
   "name": "Temperature Monitor",
@@ -749,7 +749,7 @@ def publish_temperature_reading(sensor: str, temperature: float, humidity: float
             }
         }
         redis_client.publish(
-            "homehelper:events:temperature.reading",
+            "latarnia:events:temperature.reading",
             json.dumps(event)
         )
         logger.debug(f"Published reading for {sensor}: {temperature}°C")
@@ -769,7 +769,7 @@ def publish_temperature_alert(sensor: str, temperature: float, threshold: float)
             }
         }
         redis_client.publish(
-            "homehelper:events:temperature.threshold.exceeded",
+            "latarnia:events:temperature.threshold.exceeded",
             json.dumps(event)
         )
         logger.warning(f"Published alert for {sensor}: {temperature}°C (threshold: {threshold}°C)")
@@ -784,7 +784,7 @@ def start_event_subscriber():
     
     def event_listener():
         pubsub = redis_client.pubsub()
-        pubsub.subscribe("homehelper:events:system.config.updated")
+        pubsub.subscribe("latarnia:events:system.config.updated")
         logger.info("Started event subscriber")
         
         for message in pubsub.listen():
@@ -821,7 +821,7 @@ if __name__ == "__main__":
 ## Testing Your App
 
 ### Local Testing
-Before deploying to HomeHelper, test your app locally:
+Before deploying to Latarnia, test your app locally:
 
 ```bash
 # Install dependencies
@@ -852,7 +852,7 @@ curl http://localhost:8100/api/readings/1
 - [ ] All REST API endpoints return valid responses (if `/ui` implemented)
 - [ ] Error handling returns proper HTTP status codes
 - [ ] App handles missing optional arguments gracefully
-- [ ] homehelper.json manifest is valid JSON with all required fields
+- [ ] latarnia.json manifest is valid JSON with all required fields
 - [ ] Event declarations in manifest match actual implementation
 - [ ] requirements.txt includes all necessary dependencies
 
@@ -863,4 +863,4 @@ curl http://localhost:8100/api/readings/1
 - **Import errors**: Verify all dependencies are in requirements.txt
 - **Health endpoint returns wrong format**: Ensure `health` field is exactly "good", "warning", or "error"
 
-This specification provides complete guidance for developing HomeHelper-compatible apps while maintaining consistency and proper integration with the main system.
+This specification provides complete guidance for developing Latarnia-compatible apps while maintaining consistency and proper integration with the main system.

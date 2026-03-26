@@ -1,5 +1,5 @@
 """
-macOS-compatible process manager for HomeHelper service apps.
+macOS-compatible process manager for Latarnia service apps.
 
 This manager handles starting/stopping service apps as background processes
 on macOS where systemd is not available.
@@ -20,7 +20,7 @@ class MacOSProcessManager:
         self.config_manager = config_manager
         self.app_manager = app_manager
         self.port_manager = port_manager
-        self.logger = logging.getLogger("homehelper.process_manager_macos")
+        self.logger = logging.getLogger("latarnia.process_manager_macos")
         
         # Track running processes: app_id -> process info
         self.processes: Dict[str, dict] = {}

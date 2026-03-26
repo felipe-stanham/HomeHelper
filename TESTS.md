@@ -1,6 +1,6 @@
 # Regression Tests
 
-Critical-path tests for HomeHelper. Each test is declarative — Claude Code generates verification scripts on the fly.
+Critical-path tests for Latarnia. Each test is declarative — Claude Code generates verification scripts on the fly.
 
 ## Core Infrastructure
 
@@ -8,7 +8,7 @@ Critical-path tests for HomeHelper. Each test is declarative — Claude Code gen
 
 - **test_config_defaults_on_missing_file:** Instantiate `ConfigManager` with a non-existent path `/tmp/nonexistent_hh_config.json` and call `load_config()`. -> Config uses defaults: `redis.host == "localhost"`, `redis.port == 6379`, `system.main_port == 8000`, `health_check_interval_seconds == 60`.
 
-- **test_config_port_range_values:** Create `HomeHelperConfig()` with defaults. -> `process_manager.port_range.start == 8100` and `process_manager.port_range.end == 8199`.
+- **test_config_port_range_values:** Create `LatarniaConfig()` with defaults. -> `process_manager.port_range.start == 8100` and `process_manager.port_range.end == 8199`.
 
 - **test_config_redis_url_generation:** Instantiate `ConfigManager()`, call `load_config()`, then `get_redis_url()`. -> Returns `"redis://localhost:6379/0"`.
 
@@ -30,9 +30,9 @@ Critical-path tests for HomeHelper. Each test is declarative — Claude Code gen
 
 ## App Management
 
-- **test_app_discovery_valid_manifest:** Create a temp directory structure with `apps/test-service/homehelper.json` containing `{"name": "test-service", "type": "service", "description": "Test", "version": "1.0.0", "author": "Test", "main_file": "app.py"}` and an `apps/test-service/app.py` file. Create `AppManager` with mocked config pointing to that temp dir. Call `discover_apps()`. -> Returns `1`. `registry.get_all_apps()` returns one entry with `name == "test-service"` and `type == AppType.SERVICE`.
+- **test_app_discovery_valid_manifest:** Create a temp directory structure with `apps/test-service/latarnia.json` containing `{"name": "test-service", "type": "service", "description": "Test", "version": "1.0.0", "author": "Test", "main_file": "app.py"}` and an `apps/test-service/app.py` file. Create `AppManager` with mocked config pointing to that temp dir. Call `discover_apps()`. -> Returns `1`. `registry.get_all_apps()` returns one entry with `name == "test-service"` and `type == AppType.SERVICE`.
 
-- **test_app_discovery_invalid_manifest:** Create a temp directory with `apps/bad-app/homehelper.json` containing `{"name": "bad-app"}` (missing required fields). Call `discover_apps()`. -> Returns `0`. Registry is empty.
+- **test_app_discovery_invalid_manifest:** Create a temp directory with `apps/bad-app/latarnia.json` containing `{"name": "bad-app"}` (missing required fields). Call `discover_apps()`. -> Returns `0`. Registry is empty.
 
 - **test_app_discovery_missing_main_file:** Create a temp directory with valid manifest referencing `nonexistent.py` as `main_file`, but do not create that file. Call `discover_apps()`. -> Returns `0`. Registry is empty.
 
@@ -48,25 +48,25 @@ Critical-path tests for HomeHelper. Each test is declarative — Claude Code gen
 
 ## Service Management
 
-- **test_service_template_generation:** Create `ServiceManager` with mocked dependencies. Mock `registry.get_app` to return a service app entry at path `/tmp/test-service` with `assigned_port=8100`, `main_file="app.py"`, `restart_policy="always"`, `redis_required=True`, `data_dir=True`, `logs_dir=True`. Call `generate_service_template("test-service")`. -> Returns a string containing `"Description=HomeHelper Service - test-service"`, `"ExecStart=python app.py --port 8100"`, `"Restart=always"`, `"Environment=REDIS_HOST=localhost"`.
+- **test_service_template_generation:** Create `ServiceManager` with mocked dependencies. Mock `registry.get_app` to return a service app entry at path `/tmp/test-service` with `assigned_port=8100`, `main_file="app.py"`, `restart_policy="always"`, `redis_required=True`, `data_dir=True`, `logs_dir=True`. Call `generate_service_template("test-service")`. -> Returns a string containing `"Description=Latarnia Service - test-service"`, `"ExecStart=python app.py --port 8100"`, `"Restart=always"`, `"Environment=REDIS_HOST=localhost"`.
 
 - **test_service_template_no_app:** Create `ServiceManager`. Mock `registry.get_app` to return `None`. Call `generate_service_template("nonexistent")`. -> Returns `None`.
 
-- **test_service_start_success:** Create `ServiceManager`. Mock `subprocess.run` to return `returncode=0`. Mock `registry.get_app` to return a valid service entry. Call `start_service("test-service")`. -> Returns `True`. Verify `subprocess.run` was called with `["systemctl", "--user", "start", "homehelper-test-service.service"]`. Verify `registry.update_app` was called with `status=AppStatus.RUNNING`.
+- **test_service_start_success:** Create `ServiceManager`. Mock `subprocess.run` to return `returncode=0`. Mock `registry.get_app` to return a valid service entry. Call `start_service("test-service")`. -> Returns `True`. Verify `subprocess.run` was called with `["systemctl", "--user", "start", "latarnia-test-service.service"]`. Verify `registry.update_app` was called with `status=AppStatus.RUNNING`.
 
 - **test_service_start_failure:** Create `ServiceManager`. Mock `subprocess.run` to return `returncode=1, stderr="Service failed"`. Call `start_service("test-service")`. -> Returns `False`. Verify `registry.update_app` was called with `status=AppStatus.ERROR`.
 
-- **test_service_stop_success:** Create `ServiceManager`. Mock `subprocess.run` to return `returncode=0`. Call `stop_service("test-service")`. -> Returns `True`. Verify `subprocess.run` was called with `["systemctl", "--user", "stop", "homehelper-test-service.service"]`.
+- **test_service_stop_success:** Create `ServiceManager`. Mock `subprocess.run` to return `returncode=0`. Call `stop_service("test-service")`. -> Returns `True`. Verify `subprocess.run` was called with `["systemctl", "--user", "stop", "latarnia-test-service.service"]`.
 
-- **test_service_restart_success:** Create `ServiceManager`. Mock `subprocess.run` to return `returncode=0`. Call `restart_service("test-service")`. -> Returns `True`. Verify `subprocess.run` was called with `["systemctl", "--user", "restart", "homehelper-test-service.service"]`.
+- **test_service_restart_success:** Create `ServiceManager`. Mock `subprocess.run` to return `returncode=0`. Call `restart_service("test-service")`. -> Returns `True`. Verify `subprocess.run` was called with `["systemctl", "--user", "restart", "latarnia-test-service.service"]`.
 
 ## Web Dashboard
 
-- **test_health_endpoint:** Use `httpx.AsyncClient` with FastAPI `TestClient` or ASGI transport against the `app` from `homehelper.main`. Mock `system_monitor.get_hardware_metrics()` to return `{"cpu": {"usage_percent": 30}, "memory": {"percent": 50}, "disk": {"percent": 40}}`. Mock `redis_monitor.get_redis_metrics()` to return `{"status": "connected"}`. Send GET to `/health`. -> Response status 200. JSON body has `health == "good"`, `message == "System operational"`, and `extra_info.config_loaded == True`.
+- **test_health_endpoint:** Use `httpx.AsyncClient` with FastAPI `TestClient` or ASGI transport against the `app` from `latarnia.main`. Mock `system_monitor.get_hardware_metrics()` to return `{"cpu": {"usage_percent": 30}, "memory": {"percent": 50}, "disk": {"percent": 40}}`. Mock `redis_monitor.get_redis_metrics()` to return `{"status": "connected"}`. Send GET to `/health`. -> Response status 200. JSON body has `health == "good"`, `message == "System operational"`, and `extra_info.config_loaded == True`.
 
 - **test_health_endpoint_redis_down:** Mock `redis_monitor.get_redis_metrics()` to return `{"status": "error"}`. Mock `system_monitor.get_hardware_metrics()` to return valid metrics. Send GET to `/health`. -> Response status 200. JSON body has `health == "error"` and `message` contains `"Redis connection failed"`.
 
-- **test_root_endpoint:** Send GET to `/`. -> Response status 200. JSON body has `message == "HomeHelper is running"` and `version == "0.1.0"`.
+- **test_root_endpoint:** Send GET to `/`. -> Response status 200. JSON body has `message == "Latarnia is running"` and `version == "0.1.0"`.
 
 - **test_get_all_apps_endpoint:** Mock `app_manager.registry.get_all_apps()` to return a list with one app entry (mocked `to_dict()` returning `{"app_id": "test-1", "name": "test"}`). Send GET to `/api/apps`. -> Response status 200. JSON body has `total_count == 1` and `apps` is a list of length 1.
 

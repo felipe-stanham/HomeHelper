@@ -20,7 +20,7 @@ class StreamlitManager:
         self.config_manager = config_manager
         self.app_manager = app_manager
         self.port_manager = port_manager
-        self.logger = logging.getLogger("homehelper.streamlit_manager")
+        self.logger = logging.getLogger("latarnia.streamlit_manager")
         
         # Track running Streamlit processes: app_id -> process info
         self.processes: Dict[str, dict] = {}

@@ -1,10 +1,10 @@
-# HomeHelper Workflows
+# Latarnia Workflows
 
-This document covers the main process flows and interaction patterns in HomeHelper. For component architecture and lifecycle sequence diagrams, see [architecture.md](architecture.md).
+This document covers the main process flows and interaction patterns in Latarnia. For component architecture and lifecycle sequence diagrams, see [architecture.md](architecture.md).
 
 ## 1. Application Startup
 
-What happens when the HomeHelper main application starts (the `lifespan` function in `main.py`).
+What happens when the Latarnia main application starts (the `lifespan` function in `main.py`).
 
 ```mermaid
 flowchart TD
@@ -24,7 +24,7 @@ flowchart TD
     AutoCheck -- Yes --> StartApp[Start app via ProcessManager]
     AutoCheck -- No --> Loop
     StartApp --> Loop
-    Loop -- No --> StartSub[Start Redis Event Subscriber<br/>psubscribe homehelper:events:*]
+    Loop -- No --> StartSub[Start Redis Event Subscriber<br/>psubscribe latarnia:events:*]
     StartSub --> Ready([Application Ready])
 
     Ready -.-> Shutdown([Shutdown Signal])
@@ -46,7 +46,7 @@ flowchart TD
     NextDir -- None left --> Persist[Persist registry to disk]
     Persist --> Done([Return discovered count])
 
-    NextDir -- Found --> HasManifest{homehelper.json<br/>exists?}
+    NextDir -- Found --> HasManifest{latarnia.json<br/>exists?}
     HasManifest -- No --> SkipDir[Skip directory, log warning]
     SkipDir --> NextDir
 
@@ -78,7 +78,7 @@ How a user navigates the web dashboard and interacts with apps through modals.
 sequenceDiagram
     participant User as User Browser
     participant Dash as Dashboard<br/>(FastAPI + Bootstrap)
-    participant API as HomeHelper API
+    participant API as Latarnia API
     participant SvcApp as Service App
     participant StMgr as Streamlit Manager
     participant StApp as Streamlit Process
@@ -161,23 +161,23 @@ flowchart TD
 
 ## 5. Redis Event Pub/Sub Flow
 
-How apps publish events through Redis and how the HomeHelper event subscriber captures them for the dashboard activity feed.
+How apps publish events through Redis and how the Latarnia event subscriber captures them for the dashboard activity feed.
 
 ```mermaid
 sequenceDiagram
     participant AppA as App A<br/>(Publisher)
     participant Redis as Redis<br/>(Message Bus)
-    participant Sub as HomeHelper<br/>Event Subscriber
-    participant Store as Redis List<br/>homehelper:events:recent
+    participant Sub as Latarnia<br/>Event Subscriber
+    participant Store as Redis List<br/>latarnia:events:recent
     participant AppB as App B<br/>(Subscriber)
     participant Dash as Dashboard API
 
-    Note over Sub: Background thread<br/>psubscribe homehelper:events:*
+    Note over Sub: Background thread<br/>psubscribe latarnia:events:*
 
-    AppA->>Redis: PUBLISH homehelper:events:motion.detected<br/>{source, event_type, timestamp, data}
+    AppA->>Redis: PUBLISH latarnia:events:motion.detected<br/>{source, event_type, timestamp, data}
 
     par Fan-out to all subscribers
-        Redis->>Sub: Deliver message to HomeHelper subscriber
+        Redis->>Sub: Deliver message to Latarnia subscriber
         Redis->>AppB: Deliver message to App B subscriber
     end
 
@@ -189,7 +189,7 @@ sequenceDiagram
 
     Note over Dash,Store: Later, when user refreshes dashboard
 
-    Dash->>Store: LRANGE homehelper:events:recent
+    Dash->>Store: LRANGE latarnia:events:recent
     Store-->>Dash: Recent events list
     Dash->>Dash: Format timestamps,<br/>extract messages
 ```

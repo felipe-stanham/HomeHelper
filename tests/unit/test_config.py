@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from homehelper.core.config import ConfigManager, HomeHelperConfig
+from latarnia.core.config import ConfigManager, LatarniaConfig
 
 
 class TestConfigManager:
@@ -15,7 +15,7 @@ class TestConfigManager:
     
     def test_default_config_creation(self):
         """Test creating config with defaults"""
-        config = HomeHelperConfig()
+        config = LatarniaConfig()
         
         assert config.redis.host == "localhost"
         assert config.redis.port == 6379
@@ -29,7 +29,7 @@ class TestConfigManager:
             "system": {"main_port": 8080}
         }
         
-        config = HomeHelperConfig(**config_data)
+        config = LatarniaConfig(**config_data)
         
         assert config.redis.host == "test-redis"
         assert config.redis.port == 6380
@@ -138,7 +138,7 @@ class TestConfigManager:
     
     def test_port_range_validation(self):
         """Test port range configuration"""
-        config = HomeHelperConfig()
+        config = LatarniaConfig()
         
         assert config.process_manager.port_range.start == 8100
         assert config.process_manager.port_range.end == 8199
@@ -150,6 +150,6 @@ class TestConfigManager:
             }
         }
         
-        custom_config = HomeHelperConfig(**config_data)
+        custom_config = LatarniaConfig(**config_data)
         assert custom_config.process_manager.port_range.start == 9000
         assert custom_config.process_manager.port_range.end == 9099
