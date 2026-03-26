@@ -1,12 +1,12 @@
 # P-0002: Latarnia Wireframes
 
-The dashboard layout remains fundamentally unchanged from HomeHelper. The key change is that app tiles gain new capability indicators and action links. No new pages are added.
+The dashboard layout remains fundamentally unchanged from Latarnia. The key change is that app tiles gain new capability indicators and action links. No new pages are added.
 
 ---
 
 ## Screen: Dashboard (Evolved) [cap-010]
 
-The overall layout is identical to HomeHelper. Only the app tile content changes.
+The overall layout is identical to Latarnia. Only the app tile content changes.
 
 ```
 +------------------------------------------------------------------+
@@ -71,7 +71,7 @@ An app with REST, MCP, Database, Web UI, and Streams.
 
 ## Component: App Tile — Minimal/Legacy App [cap-010]
 
-An existing HomeHelper app with no new capabilities. Identical to current behavior.
+An existing Latarnia app with no new capabilities. Identical to current behavior.
 
 ```
 +-------------------------------------------+
@@ -188,5 +188,5 @@ Streamlit apps are unchanged. They don't support MCP, DB, or Streams in this ver
 - **Capability badges** (MCP, DB, Streams) are read-only indicators. Clicking them does nothing in v1.
 - **Web UI button** opens `/apps/{name}/` in a new browser tab (not in a modal — the app owns the full page).
 - **Monitor button** opens the existing modal with REST API resource tabs (unchanged behavior).
-- The **tile layout and grid behavior** is unchanged from HomeHelper. Only the content within tiles is extended.
-- All new indicators degrade gracefully: if an app has no new capabilities, the tile looks exactly like a HomeHelper tile.
+- The **tile layout and grid behavior** is unchanged from Latarnia. Only the content within tiles is extended.
+- All new indicators degrade gracefully: if an app has no new capabilities, the tile looks exactly like a Latarnia tile.

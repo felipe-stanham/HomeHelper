@@ -14,11 +14,11 @@ from datetime import datetime, timedelta
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from homehelper.core.config import ConfigManager
-from homehelper.managers.app_manager import AppManager, AppRegistry, AppManifest, AppType, AppStatus, AppRuntimeInfo
-from homehelper.managers.port_manager import PortManager
-from homehelper.managers.service_manager import ServiceManager, ServiceInfo, ServiceStatus, ServiceState
-from homehelper.managers.health_monitor import HealthMonitor, HealthCheckResult, HealthStatus
+from latarnia.core.config import ConfigManager
+from latarnia.managers.app_manager import AppManager, AppRegistry, AppManifest, AppType, AppStatus, AppRuntimeInfo
+from latarnia.managers.port_manager import PortManager
+from latarnia.managers.service_manager import ServiceManager, ServiceInfo, ServiceStatus, ServiceState
+from latarnia.managers.health_monitor import HealthMonitor, HealthCheckResult, HealthStatus
 
 
 class TestServiceManager:
@@ -88,7 +88,7 @@ class TestServiceManager:
         
         runtime_info = AppRuntimeInfo(assigned_port=8100)
         
-        from homehelper.managers.app_manager import AppRegistryEntry
+        from latarnia.managers.app_manager import AppRegistryEntry
         app_entry = AppRegistryEntry(
             app_id="test-service",
             name="test-service",
@@ -115,7 +115,7 @@ class TestServiceManager:
     def test_service_manager_initialization(self, service_manager, temp_dirs):
         """Test ServiceManager initialization"""
         assert service_manager.systemd_user_dir == temp_dirs['systemd']
-        assert service_manager.service_prefix == "homehelper-"
+        assert service_manager.service_prefix == "latarnia-"
         assert service_manager.services == {}
     
     def test_generate_service_template(self, service_manager, mock_app_manager, sample_service_app):
@@ -127,7 +127,7 @@ class TestServiceManager:
         template = service_manager.generate_service_template("test-service")
         
         assert template is not None
-        assert "Description=HomeHelper Service - test-service" in template
+        assert "Description=Latarnia Service - test-service" in template
         assert "ExecStart=python app.py --port 8100" in template
         assert "Restart=always" in template
         assert "Environment=REDIS_HOST=localhost" in template
@@ -161,7 +161,7 @@ class TestServiceManager:
         result = service_manager.create_service_file("test-service")
         
         assert result is True
-        service_file = service_manager.systemd_user_dir / "homehelper-test-service.service"
+        service_file = service_manager.systemd_user_dir / "latarnia-test-service.service"
         assert service_file.exists()
         
         # Verify systemctl daemon-reload was called
@@ -182,7 +182,7 @@ class TestServiceManager:
         
         assert result is True
         mock_subprocess.assert_called_with(
-            ["systemctl", "--user", "start", "homehelper-test-service.service"],
+            ["systemctl", "--user", "start", "latarnia-test-service.service"],
             capture_output=True,
             text=True
         )
@@ -213,7 +213,7 @@ class TestServiceManager:
         
         assert result is True
         mock_subprocess.assert_called_with(
-            ["systemctl", "--user", "stop", "homehelper-test-service.service"],
+            ["systemctl", "--user", "stop", "latarnia-test-service.service"],
             capture_output=True,
             text=True
         )
@@ -227,7 +227,7 @@ class TestServiceManager:
         
         assert result is True
         mock_subprocess.assert_called_with(
-            ["systemctl", "--user", "restart", "homehelper-test-service.service"],
+            ["systemctl", "--user", "restart", "latarnia-test-service.service"],
             capture_output=True,
             text=True
         )
@@ -240,7 +240,7 @@ class TestServiceManager:
         
         with patch.object(service_manager, '_get_process_metrics') as mock_metrics:
             mock_metrics.return_value = ServiceInfo(
-                service_name="homehelper-test-service.service",
+                service_name="latarnia-test-service.service",
                 status=ServiceStatus.ACTIVE,
                 state=ServiceState.RUNNING,
                 pid=12345,
@@ -269,7 +269,7 @@ class TestServiceManager:
         assert logs[2] == "Log line 3"
         
         mock_subprocess.assert_called_with(
-            ["journalctl", "--user", "-u", "homehelper-test-service.service", "-n", "3", "--no-pager"],
+            ["journalctl", "--user", "-u", "latarnia-test-service.service", "-n", "3", "--no-pager"],
             capture_output=True,
             text=True
         )
@@ -283,7 +283,7 @@ class TestServiceManager:
         
         assert result is True
         mock_subprocess.assert_called_with(
-            ["systemctl", "--user", "enable", "homehelper-test-service.service"],
+            ["systemctl", "--user", "enable", "latarnia-test-service.service"],
             capture_output=True,
             text=True
         )
@@ -297,7 +297,7 @@ class TestServiceManager:
         
         assert result is True
         mock_subprocess.assert_called_with(
-            ["systemctl", "--user", "disable", "homehelper-test-service.service"],
+            ["systemctl", "--user", "disable", "latarnia-test-service.service"],
             capture_output=True,
             text=True
         )
@@ -361,7 +361,7 @@ class TestHealthMonitor:
         
         runtime_info = AppRuntimeInfo(assigned_port=8100)
         
-        from homehelper.managers.app_manager import AppRegistryEntry
+        from latarnia.managers.app_manager import AppRegistryEntry
         return AppRegistryEntry(
             app_id="test-service",
             name="test-service",

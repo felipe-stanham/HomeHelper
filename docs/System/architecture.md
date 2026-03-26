@@ -1,13 +1,13 @@
-# HomeHelper Architecture
+# Latarnia Architecture
 
-This document describes the overall architecture of the HomeHelper unified home automation platform.
+This document describes the overall architecture of the Latarnia unified home automation platform.
 
 ## System Overview
 
 ```mermaid
 graph TB
     subgraph "Raspberry Pi 5"
-        subgraph "HomeHelper Main Application"
+        subgraph "Latarnia Main Application"
             FastAPI[FastAPI Web Server<br/>Port 8000]
             AppMgr[App Manager<br/>Discovery & Registry]
             SvcMgr[Service Manager<br/>systemd Integration]
@@ -28,7 +28,7 @@ graph TB
         
         subgraph "System Services"
             systemd[systemd<br/>Process Management]
-            FileSystem[Shared Storage<br/>/opt/homehelper/]
+            FileSystem[Shared Storage<br/>/opt/latarnia/]
         end
     end
     
@@ -79,7 +79,7 @@ graph TB
 - **Purpose**: Application discovery and lifecycle management
 - **Responsibilities**:
   - Auto-discovery of apps in `./apps/` directory
-  - Manifest parsing (`homehelper.json`)
+  - Manifest parsing (`latarnia.json`)
   - In-memory app registry with persistence
   - Dynamic port allocation (8100-8199 range)
   - Python dependency installation
@@ -136,8 +136,8 @@ graph LR
         Data[Data Processing]
     end
     
-    subgraph "HomeHelper Integration"
-        Manifest[homehelper.json]
+    subgraph "Latarnia Integration"
+        Manifest[latarnia.json]
         Requirements[requirements.txt]
         Setup[setup.py/commands]
     end
@@ -145,8 +145,8 @@ graph LR
     subgraph "System Integration"
         systemd[systemd Service]
         Redis[Redis Pub/Sub]
-        Storage[/opt/homehelper/data/app-name/]
-        Logs[/opt/homehelper/logs/app-name/]
+        Storage[/opt/latarnia/data/app-name/]
+        Logs[/opt/latarnia/logs/app-name/]
     end
     
     Main --> Health
@@ -173,8 +173,8 @@ graph LR
         Charts[Data Visualization]
     end
     
-    subgraph "HomeHelper Integration"
-        Manifest[homehelper.json]
+    subgraph "Latarnia Integration"
+        Manifest[latarnia.json]
         Requirements[requirements.txt]
     end
     
@@ -186,8 +186,8 @@ graph LR
     
     subgraph "System Integration"
         Redis[Redis Pub/Sub]
-        Storage[/opt/homehelper/data/app-name/]
-        Logs[/opt/homehelper/logs/app-name/]
+        Storage[/opt/latarnia/data/app-name/]
+        Logs[/opt/latarnia/logs/app-name/]
     end
     
     App --> Components
@@ -219,7 +219,7 @@ sequenceDiagram
     FS->>AM: Return app directories
     
     loop For each app directory
-        AM->>FS: Read homehelper.json
+        AM->>FS: Read latarnia.json
         FS->>AM: Return manifest data
         AM->>AM: Validate manifest
         AM->>Reg: Register app
@@ -323,9 +323,9 @@ raspberrypi.local:8000 (Main Dashboard)
 
 ### File System Layout
 ```
-/opt/homehelper/
+/opt/latarnia/
 ├── config/config.json
-├── src/homehelper/ (Application code)
+├── src/latarnia/ (Application code)
 ├── apps/ (Discovered applications)
 ├── data/ (Per-app data directories)
 ├── logs/ (Per-app log directories)

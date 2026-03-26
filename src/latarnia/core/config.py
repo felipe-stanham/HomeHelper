@@ -1,5 +1,5 @@
 """
-Configuration management for HomeHelper
+Configuration management for Latarnia
 """
 import json
 import logging
@@ -17,7 +17,7 @@ class RedisConfig(BaseModel):
 
 class EventSubscriberConfig(BaseModel):
     max_events: int = 100
-    channels: list[str] = ["homehelper:events:*"]
+    channels: list[str] = ["latarnia:events:*"]
 
 
 class LoggingConfig(BaseModel):
@@ -31,8 +31,8 @@ class PortRange(BaseModel):
 
 
 class ProcessManagerConfig(BaseModel):
-    data_dir: str = "/opt/homehelper/data"
-    logs_dir: str = "/opt/homehelper/logs"
+    data_dir: str = "/opt/latarnia/data"
+    logs_dir: str = "/opt/latarnia/logs"
     streamlit_port: int = 8501
     streamlit_ttl_seconds: int = 300
     port_range: PortRange = Field(default_factory=PortRange)
@@ -43,7 +43,7 @@ class SystemConfig(BaseModel):
     host: str = "0.0.0.0"
 
 
-class HomeHelperConfig(BaseSettings):
+class LatarniaConfig(BaseSettings):
     redis: RedisConfig = Field(default_factory=RedisConfig)
     event_subscriber: EventSubscriberConfig = Field(default_factory=EventSubscriberConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
@@ -52,19 +52,19 @@ class HomeHelperConfig(BaseSettings):
     system: SystemConfig = Field(default_factory=SystemConfig)
 
     class Config:
-        env_prefix = "HOMEHELPER_"
+        env_prefix = "LATARNIA_"
         case_sensitive = False
 
 
 class ConfigManager:
-    """Manages HomeHelper configuration from JSON file and environment variables"""
+    """Manages Latarnia configuration from JSON file and environment variables"""
     
     def __init__(self, config_path: Optional[Path] = None):
         self.config_path = config_path or Path("config/config.json")
-        self._config: Optional[HomeHelperConfig] = None
-        self.logger = logging.getLogger("homehelper.config")
+        self._config: Optional[LatarniaConfig] = None
+        self.logger = logging.getLogger("latarnia.config")
     
-    def load_config(self) -> HomeHelperConfig:
+    def load_config(self) -> LatarniaConfig:
         """Load configuration from file and environment variables"""
         config_data = {}
         
@@ -80,11 +80,11 @@ class ConfigManager:
             self.logger.warning(f"Config file not found at {self.config_path}, using defaults")
         
         # Create config object (will also load from environment variables)
-        self._config = HomeHelperConfig(**config_data)
+        self._config = LatarniaConfig(**config_data)
         return self._config
     
     @property
-    def config(self) -> HomeHelperConfig:
+    def config(self) -> LatarniaConfig:
         """Get current configuration, loading if necessary"""
         if self._config is None:
             self.load_config()

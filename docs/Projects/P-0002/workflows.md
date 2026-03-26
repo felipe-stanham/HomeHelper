@@ -1,6 +1,6 @@
 # P-0002: Latarnia Workflows
 
-This document covers the process flows and interaction patterns introduced or modified by P-0002. For existing HomeHelper workflows that remain unchanged, see `System/workflows.md`.
+This document covers the process flows and interaction patterns introduced or modified by P-0002. For existing Latarnia workflows that remain unchanged, see `System/workflows.md`.
 
 ---
 
@@ -17,11 +17,11 @@ flowchart TD
     Persist --> Done([Return discovered count])
 
     NextDir -- Found --> HasManifest{"latarnia.json or
-    homehelper.json?"}
+    latarnia.json?"}
     HasManifest -- No --> SkipDir[Skip, log warning]
     SkipDir --> NextDir
 
-    HasManifest -- homehelper.json --> DeprecWarn[Log deprecation warning]
+    HasManifest -- latarnia.json --> DeprecWarn[Log deprecation warning]
     DeprecWarn --> Parse[Parse manifest]
     HasManifest -- latarnia.json --> Parse
 

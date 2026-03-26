@@ -2,19 +2,19 @@
 
 > **Name:** TBD — candidates: Latarnia · Razem · Rdzeń
 > **Status:** Pre-spec review
-> **Evolved from:** HomeHelper v1
+> **Evolved from:** Latarnia v1
 
 ---
 
 ## The Problem
 
-HomeHelper works. Apps run, services are monitored, the dashboard is live. But the interaction model has a ceiling.
+Latarnia works. Apps run, services are monitored, the dashboard is live. But the interaction model has a ceiling.
 
 Every capability is a REST call or a dashboard click. There's no way to interact conversationally, no way to coordinate across apps, and the app contract doesn't support the richer workflows we want to build — a CRM that gets populated by a scraper, a knowledge base that serves as memory for everything, an agent that can reason across all of it.
 
 More fundamentally: the existing model has no concept of *what an app can do*. It knows apps are running. It doesn't know what they expose.
 
-The goal is to evolve HomeHelper into a **general-purpose mini-app platform** where:
+The goal is to evolve Latarnia into a **general-purpose mini-app platform** where:
 - Apps declare typed, callable surfaces (MCP tools)
 - Apps communicate asynchronously through a managed bus (Redis Streams)
 - The platform manages lifecycle, routing, and discovery — not reasoning
@@ -26,7 +26,7 @@ The goal is to evolve HomeHelper into a **general-purpose mini-app platform** wh
 Everything that works stays unchanged:
 
 - FastAPI core, systemd process management
-- App discovery via `homehelper.json` manifest
+- App discovery via `latarnia.json` manifest
 - Health monitoring and REST endpoints (monitoring surface only)
 - Streamlit app pattern for on-demand UIs
 - Redis (gains Streams, loses ad-hoc pub/sub for app→app)
@@ -112,7 +112,7 @@ The platform core maintains a lightweight memory store — a simple key-value ta
 │  └────────────────────────┬────────────────────────────────┘    │
 │                           │                                      │
 │  ┌────────────────────────▼────────────────────────────────┐    │
-│  │  Platform Core (HomeHelper evolved)                     │    │
+│  │  Platform Core (Latarnia evolved)                     │    │
 │  │  App Manager · Service Manager · Web Proxy · Dashboard  │    │
 │  └──────────┬──────────────────────────────────────────────┘    │
 │             │                                                    │
@@ -144,7 +144,7 @@ The platform core maintains a lightweight memory store — a simple key-value ta
 Two types. One contract.
 
 ### Streamlit Apps
-Unchanged from HomeHelper. On-demand UI, single instance, TTL-managed. Launched when user opens UI, killed after timeout.
+Unchanged from Latarnia. On-demand UI, single instance, TTL-managed. Launched when user opens UI, killed after timeout.
 
 ### Service / Web Apps
 Long-running process. UI is optional, not a type distinction.
@@ -160,7 +160,7 @@ An app with all three is a first-class platform citizen. An app with only REST s
 
 ## The App Contract — Evolved
 
-`homehelper.json` gains the following optional fields:
+`latarnia.json` gains the following optional fields:
 
 ```json
 {
@@ -259,7 +259,7 @@ The platform provides the bus. The agent-app provides the reasoning. No new plat
 - Approval flows for destructive operations
 - Multi-user / per-user app isolation
 - Database backups
-- REST Bridge for legacy HomeHelper apps (adapted directly)
+- REST Bridge for legacy Latarnia apps (adapted directly)
 - External third-party MCP servers in platform registry (client configuration concern, not platform)
 
 ---
@@ -284,4 +284,4 @@ Every app is independently deployable, independently testable, and independently
 
 The platform grows with every new app installed. Any MCP client connecting to the registry immediately gains the full tool surface of everything installed — past, present, and future.
 
-That's HomeHelper with a brain.
+That's Latarnia with a brain.

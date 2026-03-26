@@ -1,5 +1,5 @@
 """
-Port Manager for HomeHelper
+Port Manager for Latarnia
 
 Manages dynamic port allocation for applications in the configured range.
 Handles port assignment, tracking, and cleanup for both service and Streamlit apps.
@@ -43,7 +43,7 @@ class PortManager:
     
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
-        self.logger = logging.getLogger("homehelper.port_manager")
+        self.logger = logging.getLogger("latarnia.port_manager")
         
         # Get port range from config
         config = config_manager.config

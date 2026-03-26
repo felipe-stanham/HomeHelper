@@ -1,5 +1,5 @@
 """
-HomeHelper Managers Package
+Latarnia Managers Package
 
 Exports manager classes for application, port, and service management.
 """

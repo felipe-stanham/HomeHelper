@@ -1,3 +1,3 @@
 """
-Unit tests for HomeHelper
+Unit tests for Latarnia
 """

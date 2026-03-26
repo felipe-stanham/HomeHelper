@@ -1,10 +1,10 @@
-# HomeHelper Database Schema
+# Latarnia Database Schema
 
-This document describes the data storage and persistence strategy for the HomeHelper platform.
+This document describes the data storage and persistence strategy for the Latarnia platform.
 
 ## Storage Strategy
 
-HomeHelper uses a hybrid storage approach optimized for Raspberry Pi deployment:
+Latarnia uses a hybrid storage approach optimized for Raspberry Pi deployment:
 
 - **Configuration**: JSON files for human-readable settings
 - **App Registry**: JSON persistence with in-memory operations
@@ -191,7 +191,7 @@ erDiagram
 
 ### Configuration Files
 ```
-/opt/homehelper/config/
+/opt/latarnia/config/
 ├── config.json                 # Main configuration
 ├── config.backup.json          # Configuration backup
 └── .env                        # Environment overrides (optional)
@@ -199,7 +199,7 @@ erDiagram
 
 ### App Registry Persistence
 ```
-/opt/homehelper/registry/
+/opt/latarnia/registry/
 ├── apps.json                   # App registry data
 ├── ports.json                  # Port allocation tracking
 └── history/                    # Registry change history
@@ -209,7 +209,7 @@ erDiagram
 
 ### Application Data Structure
 ```
-/opt/homehelper/data/
+/opt/latarnia/data/
 ├── app-name-1/                 # Per-app data directory
 │   ├── config/                 # App-specific configuration
 │   ├── database/               # App database files
@@ -221,8 +221,8 @@ erDiagram
 
 ### Logging Structure
 ```
-/opt/homehelper/logs/
-├── homehelper/                 # Main application logs
+/opt/latarnia/logs/
+├── latarnia/                 # Main application logs
 │   ├── main.log
 │   ├── main.log.1
 │   └── main.log.2
@@ -240,20 +240,20 @@ erDiagram
 
 ### Message Bus Channels
 ```
-homehelper:events              # General system events
-homehelper:apps:*              # App-specific events
-homehelper:health              # Health check events
-homehelper:metrics             # System metrics
-homehelper:logs                # Log events
+latarnia:events              # General system events
+latarnia:apps:*              # App-specific events
+latarnia:health              # Health check events
+latarnia:metrics             # System metrics
+latarnia:logs                # Log events
 ```
 
 ### Redis Keys
 ```
-homehelper:config              # Cached configuration
-homehelper:apps:registry       # App registry cache
-homehelper:system:metrics      # Latest system metrics
-homehelper:ports:allocated     # Port allocation tracking
-homehelper:health:*            # Health check results
+latarnia:config              # Cached configuration
+latarnia:apps:registry       # App registry cache
+latarnia:system:metrics      # Latest system metrics
+latarnia:ports:allocated     # Port allocation tracking
+latarnia:health:*            # Health check results
 ```
 
 ### Event Message Format
@@ -280,7 +280,7 @@ homehelper:health:*            # Health check results
 ### Configuration Management
 - **Primary**: JSON file (`config/config.json`)
 - **Backup**: Automatic backup on changes
-- **Environment**: Override via `HOMEHELPER_*` variables
+- **Environment**: Override via `LATARNIA_*` variables
 - **Validation**: Pydantic models with type checking
 
 ### App Registry Management
@@ -344,10 +344,10 @@ homehelper:health:*            # Health check results
 ### Manual Backup Procedures
 ```bash
 # Backup configuration
-cp /opt/homehelper/config/config.json /backup/config-$(date +%Y%m%d).json
+cp /opt/latarnia/config/config.json /backup/config-$(date +%Y%m%d).json
 
 # Backup app registry
-cp /opt/homehelper/registry/apps.json /backup/registry-$(date +%Y%m%d).json
+cp /opt/latarnia/registry/apps.json /backup/registry-$(date +%Y%m%d).json
 
 # Backup Redis data
 redis-cli BGSAVE
@@ -355,7 +355,7 @@ cp /var/lib/redis/dump.rdb /backup/redis-$(date +%Y%m%d).rdb
 ```
 
 ### Recovery Procedures
-1. Stop HomeHelper services
+1. Stop Latarnia services
 2. Restore configuration and registry files
 3. Restore Redis data if needed
 4. Restart services

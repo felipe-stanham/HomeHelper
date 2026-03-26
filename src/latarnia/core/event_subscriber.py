@@ -1,5 +1,5 @@
 """
-Redis Event Subscriber for HomeHelper
+Redis Event Subscriber for Latarnia
 
 Subscribes to Redis pub/sub channels and stores recent events for dashboard display.
 """
@@ -18,7 +18,7 @@ class RedisEventSubscriber:
     def __init__(self, redis_url: str, max_events: int = 100):
         self.redis_url = redis_url
         self.max_events = max_events
-        self.logger = logging.getLogger("homehelper.event_subscriber")
+        self.logger = logging.getLogger("latarnia.event_subscriber")
         
         self.redis_client: Optional[redis.Redis] = None
         self.pubsub: Optional[redis.client.PubSub] = None
@@ -40,10 +40,10 @@ class RedisEventSubscriber:
             # Create pub/sub instance
             self.pubsub = self.redis_client.pubsub()
             
-            # Subscribe to all homehelper event channels
-            self.pubsub.psubscribe("homehelper:events:*")
+            # Subscribe to all latarnia event channels
+            self.pubsub.psubscribe("latarnia:events:*")
             
-            self.logger.info("Subscribed to homehelper:events:* channels")
+            self.logger.info("Subscribed to latarnia:events:* channels")
             
             # Start background thread
             self.subscriber_thread = threading.Thread(
@@ -119,7 +119,7 @@ class RedisEventSubscriber:
             event_data = json.loads(data)
             
             # Store in recent events list
-            events_key = "homehelper:events:recent"
+            events_key = "latarnia:events:recent"
             
             # Add to list
             self.redis_client.rpush(events_key, json.dumps(event_data))

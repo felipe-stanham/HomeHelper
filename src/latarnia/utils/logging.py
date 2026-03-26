@@ -1,5 +1,5 @@
 """
-Shared logging utilities for HomeHelper apps
+Shared logging utilities for Latarnia apps
 """
 import logging
 import logging.handlers
@@ -15,7 +15,7 @@ def setup_app_logger(
     backup_count: int = 5
 ) -> logging.Logger:
     """
-    Setup a logger for a HomeHelper app with file and console handlers
+    Setup a logger for a Latarnia app with file and console handlers
     
     Args:
         app_id: Unique identifier for the app
@@ -27,7 +27,7 @@ def setup_app_logger(
     Returns:
         Configured logger instance
     """
-    logger = logging.getLogger(f"homehelper.{app_id}")
+    logger = logging.getLogger(f"latarnia.{app_id}")
     
     # Avoid duplicate handlers if logger already configured
     if logger.handlers:
@@ -72,7 +72,7 @@ def get_app_logger(app_id: str) -> logging.Logger:
     Returns:
         Logger instance
     """
-    logger_name = f"homehelper.{app_id}"
+    logger_name = f"latarnia.{app_id}"
     logger = logging.getLogger(logger_name)
     
     # If no handlers, setup basic console logging
@@ -90,7 +90,7 @@ def get_app_logger(app_id: str) -> logging.Logger:
 
 def setup_main_logger(logs_dir: Path, level: str = "INFO") -> logging.Logger:
     """
-    Setup the main HomeHelper application logger
+    Setup the main Latarnia application logger
     
     Args:
         logs_dir: Directory to store log files
@@ -109,7 +109,7 @@ def setup_main_logger(logs_dir: Path, level: str = "INFO") -> logging.Logger:
 
 
 class LogFileReader:
-    """Utility class for reading and parsing HomeHelper log files"""
+    """Utility class for reading and parsing Latarnia log files"""
     
     def __init__(self, logs_dir: Path):
         self.logs_dir = Path(logs_dir)

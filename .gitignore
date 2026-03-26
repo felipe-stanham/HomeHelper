@@ -218,7 +218,7 @@ Thumbs.db
 # Deployment secrets (connection credentials per target)
 .deploy-secrets
 
-# HomeHelper specific
+# Latarnia specific
 # Ignore apps directory to allow user-provided sample applications
 apps/
 # Keep runtime data and logs local (no persistence needed)

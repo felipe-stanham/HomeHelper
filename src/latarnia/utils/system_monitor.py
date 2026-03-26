@@ -1,5 +1,5 @@
 """
-System monitoring utilities for HomeHelper on Raspberry Pi
+System monitoring utilities for Latarnia on Raspberry Pi
 """
 import os
 import time
@@ -13,7 +13,7 @@ class SystemMonitor:
     """Monitor system hardware and process metrics on Raspberry Pi"""
     
     def __init__(self):
-        self.logger = logging.getLogger("homehelper.system_monitor")
+        self.logger = logging.getLogger("latarnia.system_monitor")
     
     def get_hardware_metrics(self) -> Dict[str, Any]:
         """Get comprehensive system hardware metrics"""
@@ -159,9 +159,9 @@ class SystemMonitor:
         
         return processes
     
-    def get_homehelper_processes(self) -> List[Dict[str, Any]]:
-        """Get metrics for all HomeHelper-related processes"""
-        patterns = ["homehelper", "streamlit", "uvicorn"]
+    def get_latarnia_processes(self) -> List[Dict[str, Any]]:
+        """Get metrics for all Latarnia-related processes"""
+        patterns = ["latarnia", "streamlit", "uvicorn"]
         all_processes = []
         
         for pattern in patterns:
@@ -182,15 +182,15 @@ class SystemMonitor:
         """Get a summary of system status"""
         try:
             hardware = self.get_hardware_metrics()
-            homehelper_procs = self.get_homehelper_processes()
+            latarnia_procs = self.get_latarnia_processes()
             
             return {
                 "hardware": hardware,
                 "processes": {
-                    "homehelper_count": len(homehelper_procs),
-                    "homehelper_processes": homehelper_procs
+                    "latarnia_count": len(latarnia_procs),
+                    "latarnia_processes": latarnia_procs
                 },
-                "status": self._determine_system_status(hardware, homehelper_procs),
+                "status": self._determine_system_status(hardware, latarnia_procs),
                 "timestamp": int(time.time())
             }
         except Exception as e:

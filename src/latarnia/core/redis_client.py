@@ -1,5 +1,5 @@
 """
-Redis message bus client for HomeHelper
+Redis message bus client for Latarnia
 """
 import json
 import logging
@@ -11,14 +11,14 @@ from redis.exceptions import RedisError, ConnectionError
 
 
 class RedisMessageBusClient:
-    """Enhanced Redis message bus client for HomeHelper apps"""
+    """Enhanced Redis message bus client for Latarnia apps"""
     
     def __init__(self, app_id: str, redis_url: str = "redis://localhost:6379/0"):
         self.app_id = app_id
         self.redis_url = redis_url
         self.redis: Optional[redis.Redis] = None
         self.pubsub: Optional[redis.client.PubSub] = None
-        self.logger = logging.getLogger(f"homehelper.{app_id}.message_bus")
+        self.logger = logging.getLogger(f"latarnia.{app_id}.message_bus")
         self._connected = False
         self._subscriptions: Dict[str, Callable] = {}
         self._listener_thread: Optional[threading.Thread] = None
@@ -72,7 +72,7 @@ class RedisMessageBusClient:
             self.logger.error("Cannot publish: not connected to Redis")
             return False
         
-        channel = f"homehelper:events:{event_type}"
+        channel = f"latarnia:events:{event_type}"
         message = {
             "timestamp": int(time.time()),
             "source_app": self.app_id,
@@ -86,7 +86,7 @@ class RedisMessageBusClient:
             # Publish to specific event channel
             self.redis.publish(channel, json.dumps(message))
             # Also publish to general events channel for main app
-            self.redis.publish("homehelper:events:all", json.dumps(message))
+            self.redis.publish("latarnia:events:all", json.dumps(message))
             
             self.logger.debug(f"Published {event_type} to {channel}")
             return True
@@ -100,7 +100,7 @@ class RedisMessageBusClient:
             self.logger.error("Cannot subscribe: not connected to Redis")
             return False
         
-        channel = f"homehelper:events:{event_type}"
+        channel = f"latarnia:events:{event_type}"
         self._subscriptions[channel] = callback
         
         try:
@@ -121,7 +121,7 @@ class RedisMessageBusClient:
         if not self.is_connected():
             return False
         
-        channel = f"homehelper:events:{event_type}"
+        channel = f"latarnia:events:{event_type}"
         
         try:
             self.pubsub.unsubscribe(channel)
@@ -196,7 +196,7 @@ class RedisMessageBusClient:
             return []
         
         try:
-            channels = self.redis.pubsub_channels("homehelper:events:*")
+            channels = self.redis.pubsub_channels("latarnia:events:*")
             return [ch.decode() if isinstance(ch, bytes) else ch for ch in channels]
         except (RedisError, ConnectionError):
             return []
@@ -207,7 +207,7 @@ class RedisHealthMonitor:
     
     def __init__(self, redis_url: str = "redis://localhost:6379/0"):
         self.redis_url = redis_url
-        self.logger = logging.getLogger("homehelper.redis_health")
+        self.logger = logging.getLogger("latarnia.redis_health")
     
     def get_redis_metrics(self) -> Dict[str, Any]:
         """Get comprehensive Redis metrics"""
@@ -240,9 +240,9 @@ class RedisHealthMonitor:
             }
     
     def _get_active_channels(self, redis_client: redis.Redis) -> List[str]:
-        """Get list of active HomeHelper channels"""
+        """Get list of active Latarnia channels"""
         try:
-            channels = redis_client.pubsub_channels("homehelper:events:*")
+            channels = redis_client.pubsub_channels("latarnia:events:*")
             return [ch.decode() if isinstance(ch, bytes) else ch for ch in channels]
         except Exception:
             return []
