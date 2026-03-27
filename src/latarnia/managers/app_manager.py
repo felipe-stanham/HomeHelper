@@ -331,14 +331,16 @@ def _parse_semver(version: str) -> tuple:
 
 class AppManager:
     """Main application manager for discovery and lifecycle management"""
-    
-    def __init__(self, config_manager: ConfigManager, port_manager: PortManager, db_provisioner=None):
+
+    def __init__(self, config_manager: ConfigManager, port_manager: PortManager,
+                 db_provisioner=None, stream_manager=None):
         self.config_manager = config_manager
         self.port_manager = port_manager
         self.db_provisioner = db_provisioner
+        self.stream_manager = stream_manager
         self.registry = AppRegistry(config_manager)
         self.logger = logging.getLogger("latarnia.app_manager")
-        
+
         # Apps directory
         self.apps_dir = Path.cwd() / "apps"
         self.apps_dir.mkdir(exist_ok=True)
@@ -445,9 +447,36 @@ class AppManager:
                     if manifest.config and (
                         manifest.config.redis_streams_publish or manifest.config.redis_streams_subscribe
                     ):
+                        publish_streams = manifest.config.redis_streams_publish
+                        subscribe_streams = manifest.config.redis_streams_subscribe
+                        consumer_groups: List[str] = []
+
+                        if self.stream_manager:
+                            from .stream_manager import PublisherCollisionError
+                            try:
+                                result = self.stream_manager.setup_streams(
+                                    manifest.name, app_id, publish_streams, subscribe_streams
+                                )
+                                if not result.success:
+                                    self.logger.error(
+                                        f"Stream setup failed for {manifest.name}: {result.error_message}"
+                                    )
+                                    continue
+                                consumer_groups = result.consumer_groups
+                            except PublisherCollisionError as e:
+                                self.logger.error(str(e))
+                                continue
+                        else:
+                            if publish_streams or subscribe_streams:
+                                self.logger.warning(
+                                    f"App {manifest.name} declares redis streams but "
+                                    f"no stream manager configured"
+                                )
+
                         stream_info = StreamInfo(
-                            publish_streams=manifest.config.redis_streams_publish,
-                            subscribe_streams=manifest.config.redis_streams_subscribe,
+                            publish_streams=publish_streams,
+                            subscribe_streams=subscribe_streams,
+                            consumer_groups=consumer_groups,
                         )
 
                     # Create new registry entry
@@ -713,6 +742,19 @@ class AppManager:
         self.registry.update_app(app_id, status=AppStatus.READY)
         return True
     
+    def unregister_app(self, app_id: str) -> bool:
+        """Unregister an app and clean up its stream resources."""
+        app = self.registry.get_app(app_id)
+        if not app:
+            return False
+
+        # Clean up stream resources before removing from registry
+        if self.stream_manager and app.stream_info:
+            self.stream_manager.cleanup_app(app_id)
+            self.logger.info(f"Cleaned up stream resources for app {app_id}")
+
+        return self.registry.unregister_app(app_id)
+
     def get_app_statistics(self) -> dict:
         """Get application statistics"""
         all_apps = self.registry.get_all_apps()
