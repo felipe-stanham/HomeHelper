@@ -894,4 +894,120 @@ curl http://localhost:8100/api/readings/1
 - **Import errors**: Verify all dependencies are in requirements.txt
 - **Health endpoint returns wrong format**: Ensure `health` field is exactly "good", "warning", or "error"
 
+## MCP Server Contract
+
+### Overview
+
+Service apps can optionally expose an **MCP (Model Context Protocol) server** to provide tools that external AI clients (or the Latarnia MCP gateway) can discover and invoke. The app owns its MCP server entirely — the platform does not implement MCP for the app.
+
+### Manifest Declaration
+
+To enable MCP, add the following fields to the `config` section of your `latarnia.json` manifest:
+
+```json
+{
+  "name": "My MCP App",
+  "version": "1.0.0",
+  "type": "service",
+  "config": {
+    "mcp_server": true,
+    "mcp_port": 9001
+  }
+}
+```
+
+- **`mcp_server`** (bool): Set to `true` to declare that this app runs an MCP server.
+- **`mcp_port`** (int): The port on which the MCP server listens. Must be different from the app's REST port.
+
+### Protocol Requirements
+
+Apps that declare `mcp_server: true` must:
+
+1. **Run an HTTP-based MCP server** on the declared `mcp_port`. The server must use HTTP transport (`sse` or `streamable-http`). **stdio transport is not supported** by the platform.
+2. **Respond to MCP `tools/list`** — return a list of tools the app provides, following the MCP protocol specification.
+3. **Respond to MCP `tools/call`** — execute a tool invocation and return the result, following the MCP protocol specification.
+4. **Be ready to receive MCP requests after `/health` returns `good`** — the platform health monitor will probe the MCP port only after the standard `/health` check passes.
+
+### Platform Health Probe
+
+After the standard `/health` endpoint returns `good` or `warning`, the platform performs an MCP liveness probe:
+
+- The probe sends a basic HTTP GET to `http://localhost:{mcp_port}/sse`, `/mcp`, or `/` (tried in order).
+- If any probe returns a 2xx HTTP status, the MCP server is considered healthy.
+- The result is stored in the app's `MCPInfo.healthy` field in the registry.
+- If the probe fails, a warning is logged. The app's REST health status is **not** affected — only `MCPInfo.healthy` is set to `false`.
+
+### Recommended Implementation
+
+Use the `mcp` Python SDK for your MCP server. Example with SSE transport:
+
+```python
+from mcp.server import Server
+from mcp.server.sse import SseServerTransport
+from starlette.applications import Starlette
+from starlette.routing import Route, Mount
+import uvicorn
+
+# Create the MCP server
+server = Server("my-app-mcp")
+
+@server.list_tools()
+async def list_tools():
+    return [
+        {
+            "name": "get_status",
+            "description": "Get the current status of the app",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    ]
+
+@server.call_tool()
+async def call_tool(name: str, arguments: dict):
+    if name == "get_status":
+        return [{"type": "text", "text": "App is running normally"}]
+    raise ValueError(f"Unknown tool: {name}")
+
+# Create SSE transport
+sse = SseServerTransport("/messages/")
+
+async def handle_sse(request):
+    async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+        await server.run(streams[0], streams[1], server.create_initialization_options())
+
+routes = [
+    Route("/sse", endpoint=handle_sse),
+    Mount("/messages/", app=sse.handle_post_message),
+]
+
+app = Starlette(routes=routes)
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=9001)
+```
+
+### What the Platform Does NOT Do
+
+- The platform does **not** implement the MCP server for the app.
+- The platform does **not** validate MCP tool schemas or responses.
+- The platform does **not** support stdio-based MCP transport.
+- The platform does **not** proxy MCP requests to the app (that is the MCP gateway's responsibility in a separate scope).
+
+### Testing Your MCP Server
+
+```bash
+# Start your app (REST + MCP)
+python app.py --port 8100
+
+# Verify the REST health endpoint
+curl http://localhost:8100/health
+
+# Verify MCP server is responding (SSE transport)
+curl -N http://localhost:9001/sse
+# Should return an SSE stream or a valid HTTP response
+```
+
 This specification provides complete guidance for developing Latarnia-compatible apps while maintaining consistency and proper integration with the main system.
