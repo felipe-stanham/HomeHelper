@@ -36,21 +36,32 @@ Each app must include a `latarnia.json` file in its root directory:
   "description": "Detects motion in camera feeds and publishes events",
   "type": "service",
   "author": "Your Name",
+  "main_file": "app.py",
   "config": {
     "has_UI": true,
+    "has_web_ui": false,
     "redis_required": true,
+    "database": true,
+    "mcp_server": true,
+    "mcp_port": 9001,
     "logs_dir": true,
     "data_dir": true,
     "auto_start": true,
-    "restart_policy": "always"
+    "restart_policy": "always",
+    "redis_streams_publish": ["camera.motion.detected"],
+    "redis_streams_subscribe": []
   },
   "install": {
     "setup_commands": [
       "mkdir -p /opt/latarnia/data/camera_detection"
     ]
-  }
+  },
+  "requires": [
+    {"app": "knowledge_base", "min_version": "1.0.0"}
+  ]
 }
 ```
+> **Note:** All fields under `config` except `restart_policy` are optional and default to `false`/`null`/`[]`. The `requires` field is also optional and defaults to `[]`. Existing apps without these fields continue to work unchanged.
 
 #### Manifest Field Definitions
 
@@ -64,14 +75,34 @@ Each app must include a `latarnia.json` file in its root directory:
 
 ##### Optional Fields
 - **config.has_UI**: Boolean, if app has a UI (default: false, Streamlit apps always have UI)
+- **config.has_web_ui**: Boolean, if app serves its own web UI via HTTP on its assigned port (default: false). When true, the platform can reverse-proxy requests under `/apps/{app_name}/`.
 - **config.redis_required**: Boolean, if app needs Redis (default: false)
+- **config.database**: Boolean, if app needs a dedicated Postgres database (default: false). When true, the platform provisions an isolated database and passes `--db-url` at launch.
+- **config.mcp_server**: Boolean, if app exposes an MCP server (default: false). The app must implement the MCP protocol on its declared `mcp_port`.
+- **config.mcp_port**: Integer, the port the app's MCP server listens on (default: null). Required when `mcp_server: true`.
 - **config.logs_dir**: Boolean, if app receives the logs_dir argument (default: false)
 - **config.data_dir**: Boolean, if app receives the data_dir argument (default: false)
 - **config.auto_start**: Boolean, start on main app startup (default: false)
 - **config.restart_policy**: `"always"`, `"on-failure"`, `"never"` (default: "always")
+- **config.redis_streams_publish**: Array of stream names this app publishes to (default: []). Each stream can have at most one publisher.
+- **config.redis_streams_subscribe**: Array of stream names this app subscribes to (default: []). Consumer groups are created per subscribing app.
 - **install.setup_commands**: Shell commands to run during installation
 - **events.publishes**: Array of event types this app publishes (see Redis Events section)
 - **events.subscribes**: Array of event types this app subscribes to (see Redis Events section)
+- **requires**: Array of dependency objects. Each declares a required app and minimum version. If any dependency is unmet at discovery time, the app will not be registered.
+
+##### Dependency Declaration (requires)
+```json
+{
+  "requires": [
+    {"app": "knowledge_base", "min_version": "1.2.0"}
+  ]
+}
+```
+- **app**: Name of the required app (must match the `name` field in the dependency's manifest)
+- **min_version**: Minimum semantic version required (inclusive)
+- Dependencies are checked at discovery time. If a required app is not registered or its version is below `min_version`, the dependent app is skipped with an error log.
+- Only direct dependencies are checked — no transitive resolution.
 
 ## Service App Requirements
 

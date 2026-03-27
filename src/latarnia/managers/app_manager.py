@@ -42,16 +42,28 @@ class AppStatus(str, Enum):
 class AppConfig(BaseModel):
     """Application configuration options"""
     has_UI: bool = False
+    has_web_ui: bool = False
     redis_required: bool = False
+    database: bool = False
+    mcp_server: bool = False
+    mcp_port: Optional[int] = None
     logs_dir: bool = False
     data_dir: bool = False
     auto_start: bool = False
     restart_policy: str = Field(default="always", pattern=r'^(always|on-failure|never)$')
+    redis_streams_publish: List[str] = Field(default_factory=list)
+    redis_streams_subscribe: List[str] = Field(default_factory=list)
 
 
 class AppInstall(BaseModel):
     """Application installation configuration"""
     setup_commands: Optional[List[str]] = None
+
+
+class ManifestDependency(BaseModel):
+    """Dependency declaration in app manifest"""
+    app: str = Field(..., min_length=1)
+    min_version: str = Field(..., pattern=r'^\d+\.\d+\.\d+$')
 
 
 class AppManifest(BaseModel):
@@ -64,7 +76,8 @@ class AppManifest(BaseModel):
     main_file: str = Field(..., min_length=1)
     config: Optional[AppConfig] = Field(default_factory=AppConfig)
     install: Optional[AppInstall] = Field(default_factory=AppInstall)
-    
+    requires: List[ManifestDependency] = Field(default_factory=list)
+
     class Config:
         use_enum_values = True
 
@@ -102,6 +115,81 @@ class AppRuntimeInfo:
 
 
 @dataclass
+class DatabaseInfo:
+    """Database provisioning info for an app"""
+    provisioned: bool = False
+    database_name: Optional[str] = None
+    role_name: Optional[str] = None
+    connection_url: Optional[str] = None
+    applied_migrations: List[str] = field(default_factory=list)
+    last_migration_at: Optional[datetime] = None
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        if self.last_migration_at:
+            data['last_migration_at'] = self.last_migration_at.isoformat()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'DatabaseInfo':
+        if data.get('last_migration_at'):
+            data['last_migration_at'] = datetime.fromisoformat(data['last_migration_at'])
+        return cls(**data)
+
+
+@dataclass
+class MCPInfo:
+    """MCP server info for an app"""
+    enabled: bool = False
+    mcp_port: Optional[int] = None
+    healthy: bool = False
+    registered_tools: List[str] = field(default_factory=list)
+    last_tool_sync: Optional[datetime] = None
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        if self.last_tool_sync:
+            data['last_tool_sync'] = self.last_tool_sync.isoformat()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'MCPInfo':
+        if data.get('last_tool_sync'):
+            data['last_tool_sync'] = datetime.fromisoformat(data['last_tool_sync'])
+        return cls(**data)
+
+
+@dataclass
+class StreamInfo:
+    """Redis Streams info for an app"""
+    publish_streams: List[str] = field(default_factory=list)
+    subscribe_streams: List[str] = field(default_factory=list)
+    consumer_groups: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'StreamInfo':
+        return cls(**data)
+
+
+@dataclass
+class DependencyStatus:
+    """Resolved dependency status for a registered app"""
+    app: str = ""
+    min_version: str = ""
+    satisfied: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'DependencyStatus':
+        return cls(**data)
+
+
+@dataclass
 class AppRegistryEntry:
     """Registry entry for a discovered application"""
     app_id: str
@@ -113,27 +201,43 @@ class AppRegistryEntry:
     path: Path
     manifest: AppManifest
     runtime_info: AppRuntimeInfo = field(default_factory=AppRuntimeInfo)
+    database_info: Optional[DatabaseInfo] = None
+    mcp_info: Optional[MCPInfo] = None
+    stream_info: Optional[StreamInfo] = None
+    dependencies: List[DependencyStatus] = field(default_factory=list)
     discovered_at: datetime = field(default_factory=datetime.now)
     last_updated: datetime = field(default_factory=datetime.now)
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
         data = asdict(self)
         data['path'] = str(self.path)
         data['manifest'] = self.manifest.model_dump()
         data['runtime_info'] = self.runtime_info.to_dict()
+        data['database_info'] = self.database_info.to_dict() if self.database_info else None
+        data['mcp_info'] = self.mcp_info.to_dict() if self.mcp_info else None
+        data['stream_info'] = self.stream_info.to_dict() if self.stream_info else None
+        data['dependencies'] = [d.to_dict() for d in self.dependencies]
         data['discovered_at'] = self.discovered_at.isoformat()
         data['last_updated'] = self.last_updated.isoformat()
         data['type'] = self.type if isinstance(self.type, str) else self.type.value
         data['status'] = self.status if isinstance(self.status, str) else self.status.value
         return data
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> 'AppRegistryEntry':
         """Create from dictionary"""
         data['path'] = Path(data['path'])
         data['manifest'] = AppManifest(**data['manifest'])
         data['runtime_info'] = AppRuntimeInfo.from_dict(data['runtime_info'])
+        db = data.pop('database_info', None)
+        data['database_info'] = DatabaseInfo.from_dict(db) if db else None
+        mcp = data.pop('mcp_info', None)
+        data['mcp_info'] = MCPInfo.from_dict(mcp) if mcp else None
+        si = data.pop('stream_info', None)
+        data['stream_info'] = StreamInfo.from_dict(si) if si else None
+        deps = data.pop('dependencies', [])
+        data['dependencies'] = [DependencyStatus.from_dict(d) for d in deps] if deps else []
         data['discovered_at'] = datetime.fromisoformat(data['discovered_at'])
         data['last_updated'] = datetime.fromisoformat(data['last_updated'])
         data['type'] = AppType(data['type'])
@@ -205,6 +309,25 @@ class AppRegistry:
         """Get applications by status"""
         return [app for app in self.apps.values() if app.status == status]
 
+    def get_app_by_name(self, name: str) -> Optional[AppRegistryEntry]:
+        """Get an application by manifest name"""
+        for app in self.apps.values():
+            if app.name == name:
+                return app
+        return None
+
+    def get_app_by_path(self, path: Path) -> Optional[AppRegistryEntry]:
+        """Get an application by its filesystem path"""
+        for app in self.apps.values():
+            if app.path == path:
+                return app
+        return None
+
+
+def _parse_semver(version: str) -> tuple:
+    """Parse 'X.Y.Z' into (X, Y, Z) integer tuple for comparison."""
+    return tuple(int(p) for p in version.split('.'))
+
 
 class AppManager:
     """Main application manager for discovery and lifecycle management"""
@@ -256,17 +379,55 @@ class AppManager:
                     if not manifest:
                         continue
                     
-                    # Generate app ID
-                    app_id = self._generate_app_id(manifest.name, app_path.name)
-                    
-                    # Check if app is already registered
-                    existing_app = self.registry.get_app(app_id)
+                    # Check if app is already registered (by path — stable identifier)
+                    existing_app = self.registry.get_app_by_path(app_path)
                     if existing_app:
-                        # Update if path or version changed
-                        if existing_app.path != app_path or existing_app.version != manifest.version:
+                        if existing_app.version != manifest.version:
                             self._update_existing_app(existing_app, manifest, app_path)
                         continue
-                    
+
+                    # Generate app ID for new apps only
+                    app_id = self._generate_app_id(manifest.name, app_path.name)
+
+                    # Check dependencies
+                    resolved_deps = []
+                    deps_satisfied = True
+                    for dep in manifest.requires:
+                        dep_app = self.registry.get_app_by_name(dep.app)
+                        if not dep_app:
+                            self.logger.error(
+                                f"App '{manifest.name}' requires '{dep.app}' which is not registered"
+                            )
+                            deps_satisfied = False
+                            break
+                        if _parse_semver(dep_app.version) < _parse_semver(dep.min_version):
+                            self.logger.error(
+                                f"App '{manifest.name}' requires '{dep.app}' >= {dep.min_version}, "
+                                f"found {dep_app.version}"
+                            )
+                            deps_satisfied = False
+                            break
+                        resolved_deps.append(DependencyStatus(
+                            app=dep.app, min_version=dep.min_version, satisfied=True
+                        ))
+                    if not deps_satisfied:
+                        continue
+
+                    # Build new registry info from manifest
+                    database_info = DatabaseInfo() if manifest.config and manifest.config.database else None
+                    mcp_info = (
+                        MCPInfo(enabled=True, mcp_port=manifest.config.mcp_port)
+                        if manifest.config and manifest.config.mcp_server else None
+                    )
+                    stream_info = None
+                    if manifest.config and (
+                        manifest.config.redis_streams_publish or manifest.config.redis_streams_subscribe
+                    ):
+                        stream_info = StreamInfo(
+                            publish_streams=manifest.config.redis_streams_publish,
+                            subscribe_streams=manifest.config.redis_streams_subscribe,
+                        )
+
                     # Create new registry entry
                     entry = AppRegistryEntry(
                         app_id=app_id,
@@ -276,7 +437,11 @@ class AppManager:
                         version=manifest.version,
                         status=AppStatus.DISCOVERED,
                         path=app_path,
-                        manifest=manifest
+                        manifest=manifest,
+                        database_info=database_info,
+                        mcp_info=mcp_info,
+                        stream_info=stream_info,
+                        dependencies=resolved_deps,
                     )
                     
                     # Register the app
