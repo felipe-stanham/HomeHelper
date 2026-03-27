@@ -4,6 +4,14 @@
     "port": 6379,
     "db": 0
   },
+  "postgres": {
+    "host": "localhost",
+    "port": 5432,
+    "superuser": "",
+    "superuser_password": "",
+    "database_prefix": "latarnia_",
+    "role_prefix": "latarnia_"
+  },
   "event_subscriber": {
     "max_events": 100,
     "channels": ["latarnia:events:*"]

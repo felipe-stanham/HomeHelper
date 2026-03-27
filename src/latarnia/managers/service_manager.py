@@ -128,7 +128,13 @@ class ServiceManager:
             logs_dir = Path(self.config_manager.get_logs_dir()) / app_id
             logs_dir.mkdir(parents=True, exist_ok=True)
             cmd_args.extend(["--logs-dir", str(logs_dir)])
-        
+
+        # Add database URL hint (actual URL passed via environment variable)
+        db_url_env = None
+        if app.database_info and app.database_info.provisioned and app.database_info.connection_url:
+            db_url_env = app.database_info.connection_url
+            cmd_args.extend(["--db-url", "env:DATABASE_URL"])
+
         # Environment variables
         env_vars = []
         if app.manifest.config and app.manifest.config.redis_required:
@@ -138,6 +144,10 @@ class ServiceManager:
             if redis_config.password:
                 env_vars.append(f"REDIS_PASSWORD={redis_config.password}")
         
+        # Add database URL via environment variable (not command line)
+        if db_url_env:
+            env_vars.append(f"DATABASE_URL={db_url_env}")
+
         # Add custom environment variables from manifest
         if hasattr(app.manifest, 'environment') and app.manifest.environment:
             for key, value in app.manifest.environment.items():

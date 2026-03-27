@@ -65,6 +65,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Redis is already running")
     
+    # Check Postgres connectivity
+    logger.info("Checking Postgres connectivity...")
+    if pg_client.check_connectivity():
+        logger.info("Postgres is reachable")
+    else:
+        logger.warning("Postgres is not reachable — apps with database:true will fail to provision")
+
     # Discover apps on startup
     logger.info("Discovering applications...")
     discovered_count = app_manager.discover_apps()
@@ -115,9 +122,14 @@ from .managers import AppManager, PortManager, ServiceManager
 from .managers.health_monitor import HealthMonitor
 from .managers.process_manager_macos import MacOSProcessManager
 from .managers.streamlit_manager import StreamlitManager
+from .core.pg_client import PgClient
+from .managers.db_provisioner import DbProvisioner
+
+pg_client = PgClient(config_manager)
+db_provisioner = DbProvisioner(config_manager, pg_client)
 
 port_manager = PortManager(config_manager)
-app_manager = AppManager(config_manager, port_manager)
+app_manager = AppManager(config_manager, port_manager, db_provisioner=db_provisioner)
 service_manager = ServiceManager(config_manager, app_manager)
 health_monitor = HealthMonitor(config_manager, app_manager, service_manager)
 macos_process_manager = MacOSProcessManager(config_manager, app_manager, port_manager)

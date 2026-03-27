@@ -332,9 +332,10 @@ def _parse_semver(version: str) -> tuple:
 class AppManager:
     """Main application manager for discovery and lifecycle management"""
     
-    def __init__(self, config_manager: ConfigManager, port_manager: PortManager):
+    def __init__(self, config_manager: ConfigManager, port_manager: PortManager, db_provisioner=None):
         self.config_manager = config_manager
         self.port_manager = port_manager
+        self.db_provisioner = db_provisioner
         self.registry = AppRegistry(config_manager)
         self.logger = logging.getLogger("latarnia.app_manager")
         
@@ -414,7 +415,28 @@ class AppManager:
                         continue
 
                     # Build new registry info from manifest
-                    database_info = DatabaseInfo() if manifest.config and manifest.config.database else None
+                    database_info = None
+                    if manifest.config and manifest.config.database:
+                        if self.db_provisioner:
+                            result = self.db_provisioner.provision_database(manifest.name, app_path)
+                            if not result.success:
+                                self.logger.error(
+                                    f"DB provisioning failed for {manifest.name}: {result.error_message}"
+                                )
+                                continue
+                            database_info = DatabaseInfo(
+                                provisioned=True,
+                                database_name=result.database_name,
+                                role_name=result.role_name,
+                                connection_url=result.connection_url,
+                                applied_migrations=result.applied_migrations,
+                                last_migration_at=datetime.now() if result.applied_migrations else None,
+                            )
+                        else:
+                            self.logger.warning(
+                                f"App {manifest.name} requires database but no provisioner configured"
+                            )
+                            database_info = DatabaseInfo()
                     mcp_info = (
                         MCPInfo(enabled=True, mcp_port=manifest.config.mcp_port)
                         if manifest.config and manifest.config.mcp_server else None
@@ -506,6 +528,32 @@ class AppManager:
     
     def _update_existing_app(self, existing_app: AppRegistryEntry, manifest: AppManifest, app_path: Path) -> None:
         """Update an existing app with new manifest or path"""
+        # Handle version bump migrations if app has a provisioned database
+        if (
+            existing_app.database_info
+            and existing_app.database_info.provisioned
+            and self.db_provisioner
+            and existing_app.version != manifest.version
+        ):
+            # Stop the app before running migrations
+            was_running = existing_app.status == AppStatus.RUNNING
+            if was_running:
+                self.logger.info(f"Stopping {existing_app.name} for version bump migration")
+                self.registry.update_app(existing_app.app_id, status=AppStatus.STOPPING)
+
+            success, new_migs, error = self.db_provisioner.run_version_bump_migrations(
+                existing_app.database_info.database_name, app_path
+            )
+            if not success:
+                self.logger.error(
+                    f"Migration failed during version bump for {existing_app.name}: {error}"
+                )
+                self.registry.update_app(existing_app.app_id, status=AppStatus.ERROR)
+                return
+            if new_migs:
+                existing_app.database_info.applied_migrations.extend(new_migs)
+                existing_app.database_info.last_migration_at = datetime.now()
+
         self.registry.update_app(
             existing_app.app_id,
             manifest=manifest,
