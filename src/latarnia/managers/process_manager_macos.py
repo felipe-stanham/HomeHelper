@@ -5,6 +5,7 @@ This manager handles starting/stopping service apps as background processes
 on macOS where systemd is not available.
 """
 import logging
+import os
 import subprocess
 import signal
 import psutil
@@ -78,10 +79,18 @@ class MacOSProcessManager:
                 logs_dir = self.config_manager.get_logs_dir()
                 logs_dir.mkdir(parents=True, exist_ok=True)
                 cmd.extend(["--logs-dir", str(logs_dir)])
-            
+
+            # Build environment for subprocess
+            proc_env = dict(os.environ)
+
+            # Pass database URL via environment variable if provisioned
+            if app.database_info and app.database_info.provisioned and app.database_info.connection_url:
+                proc_env["DATABASE_URL"] = app.database_info.connection_url
+                cmd.extend(["--db-url", "env:DATABASE_URL"])
+
             # Start process
             self.logger.info(f"Starting app {app_id} with command: {' '.join(cmd)}")
-            
+
             # Redirect stdout/stderr to log file
             log_file = self.config_manager.get_logs_dir() / f"{app_id}.log"
             with open(log_file, 'a') as log:
@@ -90,7 +99,8 @@ class MacOSProcessManager:
                     cwd=str(app_path),
                     stdout=log,
                     stderr=subprocess.STDOUT,
-                    start_new_session=True  # Detach from parent
+                    start_new_session=True,  # Detach from parent
+                    env=proc_env,
                 )
             
             # Track process

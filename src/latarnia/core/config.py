@@ -38,6 +38,15 @@ class ProcessManagerConfig(BaseModel):
     port_range: PortRange = Field(default_factory=PortRange)
 
 
+class PostgresConfig(BaseModel):
+    host: str = "localhost"
+    port: int = 5432
+    superuser: str = ""
+    superuser_password: str = ""
+    database_prefix: str = "latarnia_"
+    role_prefix: str = "latarnia_"
+
+
 class SystemConfig(BaseModel):
     main_port: int = 8000
     host: str = "0.0.0.0"
@@ -45,6 +54,7 @@ class SystemConfig(BaseModel):
 
 class LatarniaConfig(BaseSettings):
     redis: RedisConfig = Field(default_factory=RedisConfig)
+    postgres: PostgresConfig = Field(default_factory=PostgresConfig)
     event_subscriber: EventSubscriberConfig = Field(default_factory=EventSubscriberConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     process_manager: ProcessManagerConfig = Field(default_factory=ProcessManagerConfig)
@@ -111,6 +121,16 @@ class ConfigManager:
         redis_config = self.config.redis
         return f"redis://{redis_config.host}:{redis_config.port}/{redis_config.db}"
     
+    def get_postgres_dsn(self, dbname: str = "postgres") -> str:
+        """Build a Postgres DSN for superuser connections"""
+        pg = self.config.postgres
+        if pg.superuser and pg.superuser_password:
+            return f"postgresql://{pg.superuser}:{pg.superuser_password}@{pg.host}:{pg.port}/{dbname}"
+        elif pg.superuser:
+            return f"postgresql://{pg.superuser}@{pg.host}:{pg.port}/{dbname}"
+        else:
+            return f"postgresql://@{pg.host}:{pg.port}/{dbname}"
+
     def get_data_dir(self, app_name: Optional[str] = None) -> Path:
         """Get data directory path, optionally for specific app"""
         base_dir = Path(self.config.process_manager.data_dir)
