@@ -16,8 +16,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from latarnia.core.config import ConfigManager
 from latarnia.managers.app_manager import (
-    AppManager, AppRegistry, AppRegistryEntry, AppManifest, 
-    AppType, AppStatus, AppRuntimeInfo
+    AppManager, AppRegistry, AppRegistryEntry, AppManifest,
+    AppType, AppStatus, AppRuntimeInfo, AppConfig,
+    ManifestDependency, DatabaseInfo, MCPInfo, StreamInfo,
+    DependencyStatus, _parse_semver,
 )
 from latarnia.managers.port_manager import PortManager
 
@@ -626,3 +628,367 @@ class TestAppManager:
         assert stats['type_breakdown']['service'] == 1
         assert stats['type_breakdown']['streamlit'] == 1
         assert stats['status_breakdown']['discovered'] == 2
+
+
+class TestEvolvedManifest:
+    """Test cases for evolved manifest fields (P-0002 Scope 2)"""
+
+    def test_manifest_with_new_config_fields(self):
+        """Test manifest parsing with all new optional config fields"""
+        data = {
+            "name": "crm-app",
+            "type": "service",
+            "description": "CRM application",
+            "version": "1.0.0",
+            "author": "Test Author",
+            "main_file": "app.py",
+            "config": {
+                "database": True,
+                "mcp_server": True,
+                "mcp_port": 9001,
+                "has_web_ui": True,
+                "redis_streams_publish": ["crm.contacts.created"],
+                "redis_streams_subscribe": ["scraper.leads.new"],
+            },
+        }
+        manifest = AppManifest(**data)
+        assert manifest.config.database is True
+        assert manifest.config.mcp_server is True
+        assert manifest.config.mcp_port == 9001
+        assert manifest.config.has_web_ui is True
+        assert manifest.config.redis_streams_publish == ["crm.contacts.created"]
+        assert manifest.config.redis_streams_subscribe == ["scraper.leads.new"]
+
+    def test_manifest_with_requires(self):
+        """Test manifest parsing with dependency declarations"""
+        data = {
+            "name": "crm-app",
+            "type": "service",
+            "description": "CRM application",
+            "version": "1.0.0",
+            "author": "Test Author",
+            "main_file": "app.py",
+            "requires": [
+                {"app": "knowledge_base", "min_version": "1.2.0"},
+            ],
+        }
+        manifest = AppManifest(**data)
+        assert len(manifest.requires) == 1
+        assert manifest.requires[0].app == "knowledge_base"
+        assert manifest.requires[0].min_version == "1.2.0"
+
+    def test_manifest_backward_compat_no_new_fields(self):
+        """Existing manifests without new fields parse identically"""
+        data = {
+            "name": "old-app",
+            "type": "service",
+            "description": "Legacy app",
+            "version": "1.0.0",
+            "author": "Test Author",
+            "main_file": "app.py",
+        }
+        manifest = AppManifest(**data)
+        assert manifest.config.database is False
+        assert manifest.config.mcp_server is False
+        assert manifest.config.mcp_port is None
+        assert manifest.config.has_web_ui is False
+        assert manifest.config.redis_streams_publish == []
+        assert manifest.config.redis_streams_subscribe == []
+        assert manifest.requires == []
+
+
+class TestNewDataclasses:
+    """Test cases for new registry dataclasses"""
+
+    def test_database_info_serialization(self):
+        db = DatabaseInfo(
+            provisioned=True,
+            database_name="latarnia_crm",
+            role_name="latarnia_crm_role",
+            connection_url="postgresql://...",
+            applied_migrations=["001_init.sql"],
+            last_migration_at=datetime(2026, 3, 27, 12, 0, 0),
+        )
+        data = db.to_dict()
+        assert data["last_migration_at"] == "2026-03-27T12:00:00"
+        restored = DatabaseInfo.from_dict(data)
+        assert restored.provisioned is True
+        assert restored.database_name == "latarnia_crm"
+        assert isinstance(restored.last_migration_at, datetime)
+
+    def test_mcp_info_serialization(self):
+        mcp = MCPInfo(
+            enabled=True, mcp_port=9001, healthy=True,
+            registered_tools=["search", "add"],
+            last_tool_sync=datetime(2026, 3, 27, 12, 0, 0),
+        )
+        data = mcp.to_dict()
+        restored = MCPInfo.from_dict(data)
+        assert restored.enabled is True
+        assert restored.mcp_port == 9001
+        assert restored.registered_tools == ["search", "add"]
+
+    def test_stream_info_serialization(self):
+        si = StreamInfo(
+            publish_streams=["crm.contacts.created"],
+            subscribe_streams=["scraper.leads.new"],
+            consumer_groups=["crm"],
+        )
+        data = si.to_dict()
+        restored = StreamInfo.from_dict(data)
+        assert restored.publish_streams == ["crm.contacts.created"]
+
+    def test_dependency_status_serialization(self):
+        dep = DependencyStatus(app="kb", min_version="1.0.0", satisfied=True)
+        data = dep.to_dict()
+        restored = DependencyStatus.from_dict(data)
+        assert restored.app == "kb"
+        assert restored.satisfied is True
+
+    def test_registry_entry_with_new_fields_roundtrip(self, tmp_path):
+        """Full AppRegistryEntry with all new fields survives serialization roundtrip"""
+        manifest = AppManifest(
+            name="crm", type=AppType.SERVICE, description="CRM",
+            version="1.0.0", author="Test", main_file="app.py",
+            config=AppConfig(database=True, mcp_server=True, mcp_port=9001),
+            requires=[ManifestDependency(app="kb", min_version="1.0.0")],
+        )
+        entry = AppRegistryEntry(
+            app_id="crm-1", name="crm", type=AppType.SERVICE,
+            description="CRM", version="1.0.0", status=AppStatus.DISCOVERED,
+            path=tmp_path, manifest=manifest,
+            database_info=DatabaseInfo(provisioned=True, database_name="latarnia_crm"),
+            mcp_info=MCPInfo(enabled=True, mcp_port=9001),
+            stream_info=StreamInfo(publish_streams=["crm.contacts"]),
+            dependencies=[DependencyStatus(app="kb", min_version="1.0.0", satisfied=True)],
+        )
+        data = entry.to_dict()
+        restored = AppRegistryEntry.from_dict(data)
+        assert restored.database_info.provisioned is True
+        assert restored.mcp_info.mcp_port == 9001
+        assert restored.stream_info.publish_streams == ["crm.contacts"]
+        assert restored.dependencies[0].app == "kb"
+
+    def test_registry_entry_from_dict_missing_new_fields(self, tmp_path):
+        """Old registry JSON without new fields deserializes with defaults"""
+        manifest = AppManifest(
+            name="old", type=AppType.SERVICE, description="Old",
+            version="1.0.0", author="Test", main_file="app.py",
+        )
+        entry = AppRegistryEntry(
+            app_id="old-1", name="old", type=AppType.SERVICE,
+            description="Old", version="1.0.0", status=AppStatus.DISCOVERED,
+            path=tmp_path, manifest=manifest,
+        )
+        data = entry.to_dict()
+        # Simulate old JSON that lacks new keys
+        del data["database_info"]
+        del data["mcp_info"]
+        del data["stream_info"]
+        del data["dependencies"]
+        restored = AppRegistryEntry.from_dict(data)
+        assert restored.database_info is None
+        assert restored.mcp_info is None
+        assert restored.stream_info is None
+        assert restored.dependencies == []
+
+
+class TestParseSemver:
+    """Test semver parsing utility"""
+
+    def test_parse_semver(self):
+        assert _parse_semver("1.2.3") == (1, 2, 3)
+        assert _parse_semver("0.0.1") == (0, 0, 1)
+
+    def test_semver_comparison(self):
+        assert _parse_semver("1.2.0") >= _parse_semver("1.2.0")
+        assert _parse_semver("2.0.0") >= _parse_semver("1.2.0")
+        assert _parse_semver("1.1.0") < _parse_semver("1.2.0")
+
+
+class TestDependencyResolution:
+    """Test dependency resolution during app discovery"""
+
+    @pytest.fixture
+    def temp_dirs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            config_dir = temp_path / "config"
+            apps_dir = temp_path / "apps"
+            config_dir.mkdir()
+            apps_dir.mkdir()
+            yield {"base": temp_path, "config": config_dir, "apps": apps_dir}
+
+    @pytest.fixture
+    def app_manager(self, temp_dirs):
+        mock_config = Mock()
+        mock_config.process_manager.port_range.start = 8100
+        mock_config.process_manager.port_range.end = 8105
+        mock_config_manager = Mock(spec=ConfigManager)
+        mock_config_manager.config = mock_config
+        mock_config_manager.get_data_dir.return_value = temp_dirs["config"]
+        mock_port_manager = Mock(spec=PortManager)
+        mock_port_manager.allocate_port.return_value = 8100
+        with patch("pathlib.Path.cwd", return_value=temp_dirs["base"]):
+            return AppManager(mock_config_manager, mock_port_manager)
+
+    def _create_app(self, apps_dir, name, version, requires=None):
+        """Helper: create an app directory with manifest and main file"""
+        app_dir = apps_dir / name
+        app_dir.mkdir(exist_ok=True)
+        manifest = {
+            "name": name,
+            "type": "service",
+            "description": f"{name} app",
+            "version": version,
+            "author": "Test",
+            "main_file": "app.py",
+        }
+        if requires:
+            manifest["requires"] = requires
+        (app_dir / "latarnia.json").write_text(json.dumps(manifest))
+        (app_dir / "app.py").write_text("# main")
+
+    def test_dependency_satisfied_exact_version(self, app_manager, temp_dirs):
+        """App registers when required dep exists at exact min_version"""
+        self._create_app(temp_dirs["apps"], "knowledge_base", "1.2.0")
+        app_manager.discover_apps()
+        assert app_manager.registry.get_app_by_name("knowledge_base") is not None
+
+        self._create_app(
+            temp_dirs["apps"], "crm", "1.0.0",
+            requires=[{"app": "knowledge_base", "min_version": "1.2.0"}],
+        )
+        count = app_manager.discover_apps()
+        assert count == 1
+        crm = app_manager.registry.get_app_by_name("crm")
+        assert crm is not None
+        assert crm.dependencies[0].satisfied is True
+
+    def test_dependency_satisfied_higher_version(self, app_manager, temp_dirs):
+        """App registers when dep version exceeds min_version"""
+        self._create_app(temp_dirs["apps"], "knowledge_base", "2.0.0")
+        app_manager.discover_apps()
+
+        self._create_app(
+            temp_dirs["apps"], "crm", "1.0.0",
+            requires=[{"app": "knowledge_base", "min_version": "1.2.0"}],
+        )
+        count = app_manager.discover_apps()
+        assert count == 1
+        assert app_manager.registry.get_app_by_name("crm") is not None
+
+    def test_dependency_version_too_low(self, app_manager, temp_dirs):
+        """App is skipped when dep version is below min_version"""
+        self._create_app(temp_dirs["apps"], "knowledge_base", "1.1.0")
+        app_manager.discover_apps()
+
+        self._create_app(
+            temp_dirs["apps"], "crm", "1.0.0",
+            requires=[{"app": "knowledge_base", "min_version": "1.2.0"}],
+        )
+        count = app_manager.discover_apps()
+        assert count == 0
+        assert app_manager.registry.get_app_by_name("crm") is None
+
+    def test_dependency_missing_app(self, app_manager, temp_dirs):
+        """App is skipped when required dep is not registered"""
+        self._create_app(
+            temp_dirs["apps"], "crm", "1.0.0",
+            requires=[{"app": "knowledge_base", "min_version": "1.2.0"}],
+        )
+        count = app_manager.discover_apps()
+        assert count == 0
+        assert app_manager.registry.get_app_by_name("crm") is None
+
+
+class TestDiscoveryNewFields:
+    """Test that discovery populates new registry fields from manifest"""
+
+    @pytest.fixture
+    def temp_dirs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            (temp_path / "config").mkdir()
+            (temp_path / "apps").mkdir()
+            yield temp_path
+
+    @pytest.fixture
+    def app_manager(self, temp_dirs):
+        mock_config = Mock()
+        mock_config.process_manager.port_range.start = 8100
+        mock_config.process_manager.port_range.end = 8105
+        mock_cm = Mock(spec=ConfigManager)
+        mock_cm.config = mock_config
+        mock_cm.get_data_dir.return_value = temp_dirs / "config"
+        mock_pm = Mock(spec=PortManager)
+        with patch("pathlib.Path.cwd", return_value=temp_dirs):
+            return AppManager(mock_cm, mock_pm)
+
+    def test_discovery_populates_database_info(self, app_manager, temp_dirs):
+        app_dir = temp_dirs / "apps" / "db-app"
+        app_dir.mkdir()
+        manifest = {
+            "name": "db-app", "type": "service", "description": "DB app",
+            "version": "1.0.0", "author": "Test", "main_file": "app.py",
+            "config": {"database": True},
+        }
+        (app_dir / "latarnia.json").write_text(json.dumps(manifest))
+        (app_dir / "app.py").write_text("# main")
+        app_manager.discover_apps()
+        entry = app_manager.registry.get_app_by_name("db-app")
+        assert entry.database_info is not None
+        assert entry.database_info.provisioned is False
+
+    def test_discovery_populates_mcp_info(self, app_manager, temp_dirs):
+        app_dir = temp_dirs / "apps" / "mcp-app"
+        app_dir.mkdir()
+        manifest = {
+            "name": "mcp-app", "type": "service", "description": "MCP app",
+            "version": "1.0.0", "author": "Test", "main_file": "app.py",
+            "config": {"mcp_server": True, "mcp_port": 9001},
+        }
+        (app_dir / "latarnia.json").write_text(json.dumps(manifest))
+        (app_dir / "app.py").write_text("# main")
+        app_manager.discover_apps()
+        entry = app_manager.registry.get_app_by_name("mcp-app")
+        assert entry.mcp_info is not None
+        assert entry.mcp_info.enabled is True
+        assert entry.mcp_info.mcp_port == 9001
+
+    def test_discovery_populates_stream_info(self, app_manager, temp_dirs):
+        app_dir = temp_dirs / "apps" / "stream-app"
+        app_dir.mkdir()
+        manifest = {
+            "name": "stream-app", "type": "service", "description": "Stream app",
+            "version": "1.0.0", "author": "Test", "main_file": "app.py",
+            "config": {
+                "redis_streams_publish": ["app.events"],
+                "redis_streams_subscribe": ["other.events"],
+            },
+        }
+        (app_dir / "latarnia.json").write_text(json.dumps(manifest))
+        (app_dir / "app.py").write_text("# main")
+        app_manager.discover_apps()
+        entry = app_manager.registry.get_app_by_name("stream-app")
+        assert entry.stream_info is not None
+        assert entry.stream_info.publish_streams == ["app.events"]
+        assert entry.stream_info.subscribe_streams == ["other.events"]
+
+    def test_discovery_no_new_fields_backward_compat(self, app_manager, temp_dirs):
+        """App with no new fields gets None for all new info objects"""
+        app_dir = temp_dirs / "apps" / "plain-app"
+        app_dir.mkdir()
+        manifest = {
+            "name": "plain-app", "type": "service", "description": "Plain",
+            "version": "1.0.0", "author": "Test", "main_file": "app.py",
+        }
+        (app_dir / "latarnia.json").write_text(json.dumps(manifest))
+        (app_dir / "app.py").write_text("# main")
+        app_manager.discover_apps()
+        entry = app_manager.registry.get_app_by_name("plain-app")
+        assert entry is not None
+        assert entry.database_info is None
+        assert entry.mcp_info is None
+        assert entry.stream_info is None
+        assert entry.dependencies == []
