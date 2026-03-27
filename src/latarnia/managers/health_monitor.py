@@ -3,6 +3,7 @@ Health Monitor for Latarnia
 
 Handles periodic health checks for service applications and tracks health status.
 Provides configurable health check intervals and failure tracking.
+Includes MCP server liveness probes for apps that declare mcp_server: true.
 """
 
 import asyncio
@@ -14,7 +15,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from ..core.config import ConfigManager
-from .app_manager import AppManager, AppType, AppStatus
+from .app_manager import AppManager, AppType, AppStatus, MCPInfo
 from .service_manager import ServiceManager, ServiceStatus
 
 
@@ -223,7 +224,11 @@ class HealthMonitor:
                     # Update app registry with health info
                     app.runtime_info.last_health_check = datetime.now()
                     self.app_manager.registry.update_app(app_id, runtime_info=app.runtime_info)
-                    
+
+                    # After /health passes, probe MCP server if enabled
+                    if status in [HealthStatus.GOOD, HealthStatus.WARNING]:
+                        await self._probe_mcp_health(app)
+
                     return result
                     
                 else:
@@ -240,6 +245,65 @@ class HealthMonitor:
             await self._handle_health_check_failure(app_id, error_msg)
             return None
     
+    async def _probe_mcp_health(self, app) -> None:
+        """
+        Probe the MCP server for an app that declares mcp_server: true.
+
+        Performs a basic HTTP GET to the app's declared mcp_port. If the
+        server responds with any 2xx status, MCPInfo.healthy is set to True;
+        otherwise it is set to False. The probe is skipped when the app has
+        no MCP info or MCP is not enabled.
+
+        Args:
+            app: AppRegistryEntry for the app to probe
+        """
+        if not app.mcp_info or not app.mcp_info.enabled:
+            return
+
+        mcp_port = app.mcp_info.mcp_port
+        if not mcp_port:
+            self.logger.debug(
+                f"App {app.app_id} has mcp_server enabled but no mcp_port declared, "
+                f"skipping MCP probe"
+            )
+            return
+
+        # Try common MCP endpoints in order of preference
+        probe_paths = ["/sse", "/mcp", "/"]
+        mcp_healthy = False
+
+        for path in probe_paths:
+            probe_url = f"http://localhost:{mcp_port}{path}"
+            try:
+                # Use a short timeout for the MCP probe (separate from /health timeout)
+                mcp_timeout = aiohttp.ClientTimeout(total=3)
+                async with self._session.get(probe_url, timeout=mcp_timeout) as response:
+                    if 200 <= response.status < 300:
+                        mcp_healthy = True
+                        self.logger.debug(
+                            f"MCP probe succeeded for app {app.app_id} on port {mcp_port}{path}"
+                        )
+                        break
+            except asyncio.TimeoutError:
+                self.logger.debug(
+                    f"MCP probe timeout for app {app.app_id} on {probe_url}"
+                )
+                continue
+            except Exception as e:
+                self.logger.debug(
+                    f"MCP probe error for app {app.app_id} on {probe_url}: {e}"
+                )
+                continue
+
+        # Update MCPInfo in registry
+        app.mcp_info.healthy = mcp_healthy
+        self.app_manager.registry.update_app(app.app_id, mcp_info=app.mcp_info)
+
+        if not mcp_healthy:
+            self.logger.warning(
+                f"MCP server probe failed for app {app.app_id} on port {mcp_port}"
+            )
+
     async def _handle_health_check_failure(self, app_id: str, error_message: str):
         """
         Handle health check failure for an app

@@ -121,7 +121,14 @@ class MacOSProcessManager:
             app.runtime_info.process_id = str(process.pid)
             app.runtime_info.started_at = datetime.now()
             
-            self.logger.info(f"Started app {app_id} (PID: {process.pid}, Port: {port})")
+            # Log MCP port alongside REST port if MCP is enabled
+            if app.mcp_info and app.mcp_info.enabled and app.mcp_info.mcp_port:
+                self.logger.info(
+                    f"Started app {app_id} (PID: {process.pid}, REST port: {port}, "
+                    f"MCP port: {app.mcp_info.mcp_port})"
+                )
+            else:
+                self.logger.info(f"Started app {app_id} (PID: {process.pid}, Port: {port})")
             return True
             
         except Exception as e:
