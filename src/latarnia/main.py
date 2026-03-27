@@ -124,12 +124,17 @@ from .managers.process_manager_macos import MacOSProcessManager
 from .managers.streamlit_manager import StreamlitManager
 from .core.pg_client import PgClient
 from .managers.db_provisioner import DbProvisioner
+from .managers.stream_manager import StreamManager
 
 pg_client = PgClient(config_manager)
 db_provisioner = DbProvisioner(config_manager, pg_client)
+stream_manager = StreamManager(config_manager)
 
 port_manager = PortManager(config_manager)
-app_manager = AppManager(config_manager, port_manager, db_provisioner=db_provisioner)
+app_manager = AppManager(
+    config_manager, port_manager,
+    db_provisioner=db_provisioner, stream_manager=stream_manager,
+)
 service_manager = ServiceManager(config_manager, app_manager)
 health_monitor = HealthMonitor(config_manager, app_manager, service_manager)
 macos_process_manager = MacOSProcessManager(config_manager, app_manager, port_manager)
@@ -397,8 +402,8 @@ async def unregister_app(app_id: str):
         # Release port if allocated
         if app.runtime_info.assigned_port:
             port_manager.release_port(app_id)
-        
-        success = app_manager.registry.unregister_app(app_id)
+
+        success = app_manager.unregister_app(app_id)
         if success:
             return {
                 "success": True,
