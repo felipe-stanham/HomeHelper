@@ -94,14 +94,15 @@ class TestMCPHealthProbe:
         app = _make_app_entry(mcp_server=True, mcp_port=9001)
         mock_app_manager.registry.get_app.return_value = app
 
-        # Mock the HTTP session to return 200 on /sse
-        mock_response = AsyncMock()
+        # Mock the HTTP session — get() must return a sync context manager
+        mock_response = MagicMock()
         mock_response.status = 200
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock(return_value=False)
+        ctx_manager = MagicMock()
+        ctx_manager.__aenter__ = AsyncMock(return_value=mock_response)
+        ctx_manager.__aexit__ = AsyncMock(return_value=False)
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value = mock_response
+        mock_session = MagicMock()
+        mock_session.get.return_value = ctx_manager
         health_monitor._session = mock_session
 
         await health_monitor._probe_mcp_health(app)
@@ -121,7 +122,7 @@ class TestMCPHealthProbe:
         app = _make_app_entry(mcp_server=True, mcp_port=9001)
         mock_app_manager.registry.get_app.return_value = app
 
-        mock_session = AsyncMock()
+        mock_session = MagicMock()
         mock_session.get.side_effect = ConnectionRefusedError("Connection refused")
         health_monitor._session = mock_session
 
@@ -138,14 +139,14 @@ class TestMCPHealthProbe:
         app = _make_app_entry(mcp_server=True, mcp_port=9001)
         mock_app_manager.registry.get_app.return_value = app
 
-        # Return 404 for all probe paths
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.status = 404
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock(return_value=False)
+        ctx_manager = MagicMock()
+        ctx_manager.__aenter__ = AsyncMock(return_value=mock_response)
+        ctx_manager.__aexit__ = AsyncMock(return_value=False)
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value = mock_response
+        mock_session = MagicMock()
+        mock_session.get.return_value = ctx_manager
         health_monitor._session = mock_session
 
         await health_monitor._probe_mcp_health(app)
@@ -162,7 +163,7 @@ class TestMCPHealthProbe:
         app = _make_app_entry(mcp_server=True, mcp_port=9001)
         mock_app_manager.registry.get_app.return_value = app
 
-        mock_session = AsyncMock()
+        mock_session = MagicMock()
         mock_session.get.side_effect = asyncio.TimeoutError()
         health_monitor._session = mock_session
 
@@ -183,7 +184,7 @@ class TestMCPHealthProbe:
         app = _make_app_entry(mcp_server=False)
         mock_app_manager.registry.get_app.return_value = app
 
-        mock_session = AsyncMock()
+        mock_session = MagicMock()
         health_monitor._session = mock_session
 
         await health_monitor._probe_mcp_health(app)
@@ -200,7 +201,7 @@ class TestMCPHealthProbe:
         app.mcp_info = None
         mock_app_manager.registry.get_app.return_value = app
 
-        mock_session = AsyncMock()
+        mock_session = MagicMock()
         health_monitor._session = mock_session
 
         await health_monitor._probe_mcp_health(app)
@@ -215,7 +216,7 @@ class TestMCPHealthProbe:
         app.mcp_info = MCPInfo(enabled=True, mcp_port=None)
         mock_app_manager.registry.get_app.return_value = app
 
-        mock_session = AsyncMock()
+        mock_session = MagicMock()
         health_monitor._session = mock_session
 
         await health_monitor._probe_mcp_health(app)
@@ -232,22 +233,22 @@ class TestMCPHealthProbe:
         app = _make_app_entry(mcp_server=True, mcp_port=9001)
         mock_app_manager.registry.get_app.return_value = app
 
-        # First call (/sse) -> connection error, second (/mcp) -> 200
-        mock_response_ok = AsyncMock()
+        mock_response_ok = MagicMock()
         mock_response_ok.status = 200
-        mock_response_ok.__aenter__ = AsyncMock(return_value=mock_response_ok)
-        mock_response_ok.__aexit__ = AsyncMock(return_value=False)
+        ctx_manager_ok = MagicMock()
+        ctx_manager_ok.__aenter__ = AsyncMock(return_value=mock_response_ok)
+        ctx_manager_ok.__aexit__ = AsyncMock(return_value=False)
 
         call_count = 0
 
-        async def side_effect(*args, **kwargs):
+        def side_effect(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise ConnectionRefusedError("Connection refused")
-            return mock_response_ok
+            return ctx_manager_ok
 
-        mock_session = AsyncMock()
+        mock_session = MagicMock()
         mock_session.get.side_effect = side_effect
         health_monitor._session = mock_session
 
@@ -287,19 +288,20 @@ class TestMCPProbeIntegration:
         mock_app_manager.registry.get_app.return_value = app
         mock_app_manager.registry.update_app.return_value = True
 
-        # Mock /health response
-        mock_health_response = AsyncMock()
+        # Mock /health response — get() returns a context manager, not a coroutine
+        mock_health_response = MagicMock()
         mock_health_response.status = 200
         mock_health_response.json = AsyncMock(return_value={
             "health": "good",
             "message": "OK",
             "extra_info": {},
         })
-        mock_health_response.__aenter__ = AsyncMock(return_value=mock_health_response)
-        mock_health_response.__aexit__ = AsyncMock(return_value=False)
+        ctx_manager = MagicMock()
+        ctx_manager.__aenter__ = AsyncMock(return_value=mock_health_response)
+        ctx_manager.__aexit__ = AsyncMock(return_value=False)
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value = mock_health_response
+        mock_session = MagicMock()
+        mock_session.get.return_value = ctx_manager
         health_monitor._session = mock_session
 
         with patch.object(
@@ -321,18 +323,19 @@ class TestMCPProbeIntegration:
         mock_app_manager.registry.update_app.return_value = True
 
         # Mock /health response with error status
-        mock_health_response = AsyncMock()
+        mock_health_response = MagicMock()
         mock_health_response.status = 200
         mock_health_response.json = AsyncMock(return_value={
             "health": "error",
             "message": "Database down",
             "extra_info": {},
         })
-        mock_health_response.__aenter__ = AsyncMock(return_value=mock_health_response)
-        mock_health_response.__aexit__ = AsyncMock(return_value=False)
+        ctx_manager = MagicMock()
+        ctx_manager.__aenter__ = AsyncMock(return_value=mock_health_response)
+        ctx_manager.__aexit__ = AsyncMock(return_value=False)
 
-        mock_session = AsyncMock()
-        mock_session.get.return_value = mock_health_response
+        mock_session = MagicMock()
+        mock_session.get.return_value = ctx_manager
         health_monitor._session = mock_session
 
         with patch.object(
