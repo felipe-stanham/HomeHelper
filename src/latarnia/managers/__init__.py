@@ -8,6 +8,7 @@ from .app_manager import AppManager, AppRegistry, AppManifest, AppType, AppStatu
 from .port_manager import PortManager
 from .service_manager import ServiceManager, ServiceInfo, ServiceStatus, ServiceState
 from .stream_manager import StreamManager, PublisherCollisionError
+from .mcp_gateway import MCPGateway, ToolIndexEntry
 
 __all__ = [
     'AppManager',
@@ -22,4 +23,6 @@ __all__ = [
     'ServiceState',
     'StreamManager',
     'PublisherCollisionError',
+    'MCPGateway',
+    'ToolIndexEntry',
 ]

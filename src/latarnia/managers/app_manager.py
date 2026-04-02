@@ -338,6 +338,7 @@ class AppManager:
         self.port_manager = port_manager
         self.db_provisioner = db_provisioner
         self.stream_manager = stream_manager
+        self.mcp_gateway = None  # Set from main.py after gateway creation
         self.registry = AppRegistry(config_manager)
         self.logger = logging.getLogger("latarnia.app_manager")
 
@@ -557,12 +558,14 @@ class AppManager:
     
     def _update_existing_app(self, existing_app: AppRegistryEntry, manifest: AppManifest, app_path: Path) -> None:
         """Update an existing app with new manifest or path"""
+        is_version_bump = existing_app.version != manifest.version
+
         # Handle version bump migrations if app has a provisioned database
         if (
             existing_app.database_info
             and existing_app.database_info.provisioned
             and self.db_provisioner
-            and existing_app.version != manifest.version
+            and is_version_bump
         ):
             # Stop the app before running migrations
             was_running = existing_app.status == AppStatus.RUNNING
@@ -582,6 +585,16 @@ class AppManager:
             if new_migs:
                 existing_app.database_info.applied_migrations.extend(new_migs)
                 existing_app.database_info.last_migration_at = datetime.now()
+
+        # Preserve old MCP tools for backward compatibility check on restart.
+        # The actual check runs in MCPGateway.on_app_started() after the app
+        # restarts with the new code and exposes its updated tool list.
+        if is_version_bump and existing_app.mcp_info and existing_app.mcp_info.registered_tools:
+            self.logger.info(
+                "Version bump for MCP app %s — old tools preserved for "
+                "backward compatibility check: %s",
+                existing_app.name, existing_app.mcp_info.registered_tools,
+            )
 
         self.registry.update_app(
             existing_app.app_id,

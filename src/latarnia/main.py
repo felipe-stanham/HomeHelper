@@ -4,6 +4,7 @@ Main FastAPI application for Latarnia
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -89,7 +90,24 @@ async def lifespan(app: FastAPI):
             else:
                 logger.error(f"Failed to start {app_entry.name}")
     logger.info(f"Auto-started {auto_start_count} service apps")
-    
+
+    # Initialize MCP gateway if enabled
+    if mcp_gateway:
+        logger.info("Initializing MCP gateway...")
+        mcp_asgi_app = await mcp_gateway.initialize()
+        gateway_path = config_manager.config.mcp.gateway_path
+        app.mount(gateway_path, mcp_asgi_app)
+        logger.info(f"MCP gateway mounted at {gateway_path}")
+
+        # Sync tools for any auto-started MCP-enabled apps
+        for app_entry in app_manager.registry.get_all_apps():
+            if (
+                app_entry.mcp_info
+                and app_entry.mcp_info.enabled
+                and app_entry.mcp_info.healthy
+            ):
+                await mcp_gateway.on_app_started(app_entry.app_id)
+
     # Start Redis event subscriber
     logger.info("Starting Redis event subscriber...")
     event_subscriber.start()
@@ -139,6 +157,14 @@ service_manager = ServiceManager(config_manager, app_manager)
 health_monitor = HealthMonitor(config_manager, app_manager, service_manager)
 macos_process_manager = MacOSProcessManager(config_manager, app_manager, port_manager)
 streamlit_manager = StreamlitManager(config_manager, app_manager, port_manager)
+
+# Initialize MCP gateway (conditional on config)
+from .managers.mcp_gateway import MCPGateway
+
+mcp_gateway: Optional[MCPGateway] = None
+if config_manager.config.mcp.enabled:
+    mcp_gateway = MCPGateway(config_manager, app_manager)
+    app_manager.mcp_gateway = mcp_gateway
 
 
 # Create FastAPI app
@@ -488,9 +514,21 @@ async def start_service(app_id: str):
     try:
         success = service_manager.start_service(app_id)
         if success:
+            mcp_compat = True
+            if mcp_gateway:
+                mcp_compat = await mcp_gateway.on_app_started(app_id)
+            if not mcp_compat:
+                service_manager.stop_service(app_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"MCP backward compatibility violation for app {app_id}. "
+                    "Previously registered tools were removed. App stopped.",
+                )
             return {"success": True, "message": f"Service started for app {app_id}"}
         else:
             raise HTTPException(status_code=400, detail=f"Failed to start service for app {app_id}")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to start service for app {app_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -502,6 +540,8 @@ async def stop_service(app_id: str):
     try:
         success = service_manager.stop_service(app_id)
         if success:
+            if mcp_gateway:
+                await mcp_gateway.on_app_stopped(app_id)
             return {"success": True, "message": f"Service stopped for app {app_id}"}
         else:
             raise HTTPException(status_code=400, detail=f"Failed to stop service for app {app_id}")
@@ -516,9 +556,21 @@ async def restart_service(app_id: str):
     try:
         success = service_manager.restart_service(app_id)
         if success:
+            mcp_compat = True
+            if mcp_gateway:
+                mcp_compat = await mcp_gateway.on_app_started(app_id)
+            if not mcp_compat:
+                service_manager.stop_service(app_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"MCP backward compatibility violation for app {app_id}. "
+                    "Previously registered tools were removed. App stopped.",
+                )
             return {"success": True, "message": f"Service restarted for app {app_id}"}
         else:
             raise HTTPException(status_code=400, detail=f"Failed to restart service for app {app_id}")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to restart service for app {app_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -928,12 +980,24 @@ async def start_app_process(app_id: str):
             raise HTTPException(status_code=400, detail="Only service apps can be started this way")
         
         success = macos_process_manager.start_app(app_id)
-        
+
         if not success:
             raise HTTPException(status_code=500, detail="Failed to start app")
-        
+
+        # Sync MCP tools and check backward compatibility
+        mcp_compat = True
+        if mcp_gateway:
+            mcp_compat = await mcp_gateway.on_app_started(app_id)
+        if not mcp_compat:
+            macos_process_manager.stop_app(app_id)
+            raise HTTPException(
+                status_code=409,
+                detail=f"MCP backward compatibility violation for app {app_id}. "
+                "Previously registered tools were removed. App stopped.",
+            )
+
         return {"success": True, "message": f"App {app_id} started successfully"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -946,10 +1010,14 @@ async def stop_app_process(app_id: str):
     """Stop an app process using the process manager"""
     try:
         success = macos_process_manager.stop_app(app_id)
-        
+
         if not success:
             raise HTTPException(status_code=404, detail="App is not running")
-        
+
+        # Remove MCP tools if gateway is active
+        if mcp_gateway:
+            await mcp_gateway.on_app_stopped(app_id)
+
         return {"success": True, "message": f"App {app_id} stopped successfully"}
         
     except HTTPException:
@@ -971,10 +1039,22 @@ async def restart_app_process(app_id: str):
             raise HTTPException(status_code=400, detail="Only service apps can be restarted this way")
         
         success = macos_process_manager.restart_app(app_id)
-        
+
         if not success:
             raise HTTPException(status_code=500, detail="Failed to restart app")
-        
+
+        # Re-sync MCP tools and check backward compatibility
+        mcp_compat = True
+        if mcp_gateway:
+            mcp_compat = await mcp_gateway.on_app_started(app_id)
+        if not mcp_compat:
+            macos_process_manager.stop_app(app_id)
+            raise HTTPException(
+                status_code=409,
+                detail=f"MCP backward compatibility violation for app {app_id}. "
+                "Previously registered tools were removed. App stopped.",
+            )
+
         return {"success": True, "message": f"App {app_id} restarted successfully"}
         
     except HTTPException:
@@ -1089,6 +1169,33 @@ async def get_running_streamlit_apps():
         return streamlit_manager.get_running_apps()
     except Exception as e:
         logger.error(f"Failed to get running Streamlit apps: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# MCP Gateway API Endpoints
+
+@app.get("/api/mcp/status")
+async def get_mcp_status():
+    """Get MCP gateway status"""
+    if not mcp_gateway:
+        return {"success": True, "data": {"enabled": False}}
+    try:
+        return {"success": True, "data": mcp_gateway.get_status()}
+    except Exception as e:
+        logger.error(f"Failed to get MCP status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/mcp/tools")
+async def get_mcp_tools():
+    """Get all registered MCP tools across apps"""
+    if not mcp_gateway:
+        return {"success": True, "data": {"tools": {}, "count": 0}}
+    try:
+        tools = mcp_gateway.get_tool_index()
+        return {"success": True, "data": {"tools": tools, "count": len(tools)}}
+    except Exception as e:
+        logger.error(f"Failed to get MCP tools: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

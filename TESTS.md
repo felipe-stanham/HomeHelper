@@ -95,3 +95,27 @@ Critical-path tests for Latarnia. Each test is declarative — Claude Code gener
 - **test_port_statistics:** Create `PortManager` with range 8100-8105 (6 ports). Allocate ports for `"app1"` (service) and `"app2"` (streamlit). Call `get_port_statistics()`. -> Returns `total_ports == 6`, `allocated_ports == 2`, `utilization_percent == 33.3`, `app_type_breakdown.service == 1`, `app_type_breakdown.streamlit == 1`.
 
 - **test_stale_port_cleanup:** Allocate a port for `"app-1"`. Set `allocation.allocated_at` to 2 hours ago. Mock socket bind to succeed (port is actually free). Call `cleanup_stale_allocations()`. -> Returns `1`. `"app-1"` is no longer in `app_ports`.
+
+## MCP Gateway
+
+- **test_mcp_config_defaults:** Create `MCPConfig()` with no arguments. -> `enabled == False`, `transport == "sse"`, `gateway_path == "/mcp"`, `tool_sync_interval_seconds == 300`.
+
+- **test_mcp_gateway_tool_index_build:** Create `MCPGateway` with a mock `app_manager` whose registry returns one healthy MCP-enabled app (`mcp_info.enabled=True`, `mcp_info.healthy=True`, `mcp_info.mcp_port=9001`). Mock `mcp.client.sse.sse_client` and `ClientSession` to return two tools (`get_time`, `echo`). Call `await gateway._build_tool_index()`. -> `gateway._tool_index` has 2 entries with keys `"app_name.get_time"` and `"app_name.echo"`.
+
+- **test_mcp_gateway_tool_index_skips_unhealthy:** Create `MCPGateway` with a mock `app_manager` whose registry returns one MCP-enabled app with `mcp_info.healthy=False`. Call `await gateway._build_tool_index()`. -> `gateway._tool_index` is empty.
+
+- **test_mcp_gateway_list_tools:** Populate `gateway._tool_index` with 3 entries from 2 apps. Call `gateway._handle_list_tools()`. -> Returns a list of 3 `mcp.types.Tool` objects with namespaced names.
+
+- **test_mcp_gateway_call_tool_success:** Populate `gateway._tool_index` with `"crm.add_contact"` pointing to app `crm` on port 9001. Mock registry to return healthy app. Mock `sse_client` + `ClientSession.call_tool` to return `CallToolResult(content=[TextContent(type="text", text="id=42")])`. Call `await gateway._handle_call_tool("crm.add_contact", {"name": "Alice"})`. -> Returns content list with text `"id=42"`.
+
+- **test_mcp_gateway_call_tool_unknown:** Call `await gateway._handle_call_tool("unknown.tool", {})` with empty index. -> Returns list with one `TextContent` containing `"Error: Unknown tool"`.
+
+- **test_mcp_gateway_call_tool_unhealthy:** Populate index with `"crm.add_contact"`. Mock registry to return app with `mcp_info.healthy=False`. Call `await gateway._handle_call_tool("crm.add_contact", {})`. -> Returns list with one `TextContent` containing `"Error: App 'crm' is currently unavailable"`.
+
+- **test_mcp_gateway_on_app_started:** Create gateway with mock app in registry. Mock `_fetch_tools_from_app` to return 2 entries. Call `await gateway.on_app_started("crm")`. -> `gateway._tool_index` has 2 entries. Registry `mcp_info.registered_tools` updated with the 2 tool names.
+
+- **test_mcp_gateway_on_app_stopped:** Populate index with 2 tools for app `crm`. Call `await gateway.on_app_stopped("crm")`. -> `gateway._tool_index` is empty.
+
+- **test_mcp_backward_compat_pass:** Call `MCPGateway.check_backward_compatibility(["search", "add", "delete"], ["search", "add", "delete", "export"])`. -> Returns `(True, [])`.
+
+- **test_mcp_backward_compat_fail:** Call `MCPGateway.check_backward_compatibility(["search", "add", "delete"], ["search", "add"])`. -> Returns `(False, ["delete"])`.
