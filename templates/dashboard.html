@@ -225,6 +225,50 @@
     return "<span class='badge bg-secondary'>⚪ Unknown</span>";
   }
 
+  function buildCapabilityBadges(app) {
+    const badges = [];
+    const mcp = app.mcp_info;
+    if (mcp && mcp.enabled) {
+      const toolCount = (mcp.registered_tools || []).length;
+      const color = mcp.healthy ? 'info' : 'secondary';
+      badges.push(`<span class="badge bg-${color}" title="MCP Tools">MCP: ${toolCount} tools</span>`);
+    }
+    const db = app.database_info;
+    if (db && db.provisioned) {
+      const migCount = (db.applied_migrations || []).length;
+      badges.push(`<span class="badge bg-success" title="Database provisioned">DB (${migCount} migrations)</span>`);
+    }
+    const streams = app.stream_info;
+    if (streams) {
+      const pubCount = (streams.publish_streams || []).length;
+      const subCount = (streams.subscribe_streams || []).length;
+      if (pubCount > 0 || subCount > 0) {
+        badges.push(`<span class="badge bg-warning text-dark" title="Redis Streams">Streams: ${pubCount} pub / ${subCount} sub</span>`);
+      }
+    }
+    return badges.join(' ');
+  }
+
+  function buildErrorAlerts(app) {
+    const alerts = [];
+    // Migration failure
+    if (app.database_info && app.database_info.provisioned === false && app.manifest?.config?.database) {
+      alerts.push('<small class="text-danger d-block">DB provisioning failed</small>');
+    }
+    // Unmet dependencies
+    const deps = app.dependencies || [];
+    const unmet = deps.filter(d => !d.satisfied);
+    if (unmet.length > 0) {
+      const names = unmet.map(d => d.app).join(', ');
+      alerts.push(`<small class="text-danger d-block">Unmet deps: ${names}</small>`);
+    }
+    // App in error state
+    if (app.status === 'error' && app.runtime_info?.error_message) {
+      alerts.push(`<small class="text-danger d-block">${app.runtime_info.error_message}</small>`);
+    }
+    return alerts.join('');
+  }
+
   function renderApps(apps) {
     const streamlitGrid = document.getElementById("hh-streamlit-grid");
     const serviceGrid = document.getElementById("hh-service-grid");
@@ -283,7 +327,14 @@
       col.className = "col-12 col-md-6 col-lg-4";
 
       const statusHtml = statusBadge(app.status);
-      const hasUI = app.manifest?.has_UI || false;
+      const hasLegacyUI = app.manifest?.config?.has_UI || false;
+      const hasWebUI = app.manifest?.config?.has_web_ui || false;
+
+      // Build capability badges
+      const capBadges = buildCapabilityBadges(app);
+
+      // Build error alerts
+      const errorAlerts = buildErrorAlerts(app);
 
       col.innerHTML = `
         <div class="card h-100 hh-card">
@@ -293,10 +344,13 @@
               <small class="text-muted text-uppercase">${app.type}</small>
             </h5>
             <p class="card-text small text-muted mb-2">${app.description || "No description"}</p>
-            <p class="mb-2">Status: ${statusHtml}</p>
+            <p class="mb-1">Status: ${statusHtml}</p>
+            ${capBadges ? `<div class="hh-cap-badges mb-2">${capBadges}</div>` : ''}
+            ${errorAlerts}
             <p class="mb-2"><small class="text-muted">Version: ${app.version}</small></p>
             <div class="mt-auto d-flex gap-2 flex-wrap">
-              ${hasUI ? `<button class="btn btn-sm btn-primary" onclick="viewServiceUI('${app.app_id}', '${app.name}')">🖥️ View UI</button>` : ''}
+              ${hasWebUI ? `<a class="btn btn-sm btn-primary" href="/apps/${app.name}/" target="_blank">Web UI</a>` : ''}
+              ${hasLegacyUI ? `<button class="btn btn-sm btn-primary" onclick="viewServiceUI('${app.app_id}', '${app.name}')">View UI</button>` : ''}
               <button class="btn btn-sm btn-outline-secondary" onclick="viewAppLogs('${app.app_id}', '${app.name}')">View Logs</button>
               <button class="btn btn-sm btn-outline-primary" onclick="viewAppDetails('${app.app_id}')">Details</button>
             </div>
@@ -434,21 +488,71 @@
               <div class="card-body">
                 <div class="row g-2">
                   <div class="col-6 col-md-3"><strong>Has UI:</strong><br>${app.manifest?.config?.has_UI ? '✅ Yes' : '❌ No'}</div>
+                  <div class="col-6 col-md-3"><strong>Web UI:</strong><br>${app.manifest?.config?.has_web_ui ? '✅ Yes' : '❌ No'}</div>
                   <div class="col-6 col-md-3"><strong>Redis Required:</strong><br>${app.manifest?.config?.redis_required ? '✅ Yes' : '❌ No'}</div>
                   <div class="col-6 col-md-3"><strong>Auto Start:</strong><br>${app.manifest?.config?.auto_start ? '✅ Yes' : '❌ No'}</div>
+                  <div class="col-6 col-md-3"><strong>Database:</strong><br>${app.manifest?.config?.database ? '✅ Yes' : '❌ No'}</div>
+                  <div class="col-6 col-md-3"><strong>MCP Server:</strong><br>${app.manifest?.config?.mcp_server ? '✅ Yes' : '❌ No'}</div>
                   <div class="col-6 col-md-3"><strong>Restart Policy:</strong><br>${app.manifest?.config?.restart_policy || 'always'}</div>
                 </div>
               </div>
             </div>
           </div>
-          
+
+          ${app.mcp_info && app.mcp_info.enabled ? `
+          <div class="col-md-6">
+            <div class="card">
+              <div class="card-header fw-semibold">MCP Server</div>
+              <div class="card-body">
+                <table class="table table-sm mb-0">
+                  <tr><td class="fw-semibold">Port:</td><td>${app.mcp_info.mcp_port || 'N/A'}</td></tr>
+                  <tr><td class="fw-semibold">Healthy:</td><td>${app.mcp_info.healthy ? '✅ Yes' : '❌ No'}</td></tr>
+                  <tr><td class="fw-semibold">Tools:</td><td>${(app.mcp_info.registered_tools || []).join(', ') || 'None'}</td></tr>
+                  <tr><td class="fw-semibold">Last Sync:</td><td>${app.mcp_info.last_tool_sync || 'Never'}</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>` : ''}
+
+          ${app.database_info ? `
+          <div class="col-md-6">
+            <div class="card">
+              <div class="card-header fw-semibold">Database</div>
+              <div class="card-body">
+                <table class="table table-sm mb-0">
+                  <tr><td class="fw-semibold">Provisioned:</td><td>${app.database_info.provisioned ? '✅ Yes' : '❌ No'}</td></tr>
+                  <tr><td class="fw-semibold">Database:</td><td>${app.database_info.database_name || 'N/A'}</td></tr>
+                  <tr><td class="fw-semibold">Role:</td><td>${app.database_info.role_name || 'N/A'}</td></tr>
+                  <tr><td class="fw-semibold">Migrations:</td><td>${(app.database_info.applied_migrations || []).length} applied</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>` : ''}
+
+          ${app.stream_info && ((app.stream_info.publish_streams || []).length > 0 || (app.stream_info.subscribe_streams || []).length > 0) ? `
+          <div class="col-md-6">
+            <div class="card">
+              <div class="card-header fw-semibold">Redis Streams</div>
+              <div class="card-body">
+                <table class="table table-sm mb-0">
+                  <tr><td class="fw-semibold">Publish:</td><td>${(app.stream_info.publish_streams || []).join(', ') || 'None'}</td></tr>
+                  <tr><td class="fw-semibold">Subscribe:</td><td>${(app.stream_info.subscribe_streams || []).join(', ') || 'None'}</td></tr>
+                  <tr><td class="fw-semibold">Consumer Groups:</td><td>${(app.stream_info.consumer_groups || []).join(', ') || 'None'}</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>` : ''}
+
           <div class="col-12 text-end">
             <button class="btn btn-outline-secondary" onclick="viewAppLogs('${app.app_id}', '${app.name}')">View Logs</button>
             ${app.type === 'streamlit' ? `
               <button class="btn btn-primary" onclick="launchStreamlitApp('${app.app_id}', '${app.name}')">🚀 Launch Streamlit</button>
             ` : ''}
+            ${app.manifest?.config?.has_web_ui ? `
+              <a class="btn btn-primary" href="/apps/${app.name}/" target="_blank">Web UI</a>
+            ` : ''}
             ${app.type === 'service' && app.manifest?.config?.has_UI ? `
-              <button class="btn btn-outline-primary" onclick="viewServiceUI('${app.app_id}', '${app.name}')">🖥️ View UI</button>
+              <button class="btn btn-outline-primary" onclick="viewServiceUI('${app.app_id}', '${app.name}')">View UI</button>
             ` : ''}
             ${app.type === 'service' ? `
               <button class="btn btn-outline-success" onclick="startApp('${app.app_id}')">Start</button>
