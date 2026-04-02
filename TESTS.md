@@ -137,3 +137,17 @@ Critical-path tests for Latarnia. Each test is declarative — Claude Code gener
 - **test_proxy_http_connect_error:** Mock a running app `crm`. Mock `httpx.AsyncClient.request` to raise `httpx.ConnectError`. Send GET to `/apps/crm/`. -> Response status 503 with body containing "Cannot connect".
 
 - **test_proxy_bare_app_redirect:** Mock a running app `crm` with `has_web_ui=True`. Send GET to `/apps/crm` (no trailing slash). -> Response status 307 with `Location: /apps/crm/`.
+
+## Dashboard Updates
+
+- **test_dashboard_capability_badges_mcp:** Call `buildCapabilityBadges` (JS function) with app data containing `mcp_info: {enabled: true, healthy: true, registered_tools: ["search", "add"]}`. -> Returns HTML string containing `"MCP: 2 tools"` and `"bg-info"`.
+
+- **test_dashboard_capability_badges_db:** Call `buildCapabilityBadges` with app data containing `database_info: {provisioned: true, applied_migrations: ["001", "002", "003"]}`. -> Returns HTML string containing `"DB (3 migrations)"` and `"bg-success"`.
+
+- **test_dashboard_capability_badges_streams:** Call `buildCapabilityBadges` with app data containing `stream_info: {publish_streams: ["events"], subscribe_streams: ["commands", "data"]}`. -> Returns HTML string containing `"Streams: 1 pub / 2 sub"`.
+
+- **test_dashboard_capability_badges_legacy:** Call `buildCapabilityBadges` with app data containing no `mcp_info`, no `database_info`, no `stream_info`. -> Returns empty string.
+
+- **test_dashboard_web_ui_button:** Render a service app card with `manifest.config.has_web_ui=true` and `name="crm"`. -> Card HTML contains `<a` tag with `href="/apps/crm/"` and text `"Web UI"`.
+
+- **test_dashboard_error_unmet_deps:** Call `buildErrorAlerts` with app data containing `dependencies: [{app: "kb", satisfied: false}]`. -> Returns HTML containing `"Unmet deps: kb"`.
