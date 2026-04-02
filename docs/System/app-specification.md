@@ -1010,4 +1010,164 @@ curl -N http://localhost:9001/sse
 # Should return an SSE stream or a valid HTTP response
 ```
 
+## Database & Migrations
+
+### Overview
+Apps that declare `database: true` in their manifest receive an isolated Postgres database provisioned by the platform. The connection string is passed via `--db-url` at launch.
+
+### What the Platform Provides
+- A dedicated database named `latarnia_{app_name}`
+- A dedicated role `latarnia_{app_name}_role` with LOGIN and CONNECT privileges
+- Automatic migration execution on first discovery and version bumps
+- A `schema_versions` table in the app database tracking applied migrations
+
+### Migration File Conventions
+Place SQL migration files in a `migrations/` directory at the app root:
+
+```
+my_app/
+├── latarnia.json
+├── app.py
+└── migrations/
+    ├── 001_initial.sql
+    ├── 002_add_tags.sql
+    └── 003_add_status.sql
+```
+
+**Rules:**
+- Files must be named with a numeric prefix (e.g., `001_`, `002_`) for ordering
+- Migrations run in numeric order during a single transaction
+- Each migration runs exactly once — the platform tracks applied migrations via checksums
+- On failure: the transaction rolls back, the database is dropped and recreated, and the app is NOT started
+- Migrations are forward-only — there is no rollback automation
+
+### App Responsibilities
+- Use the `--db-url` connection string for all database access
+- Do NOT create databases or roles — the platform handles this
+- Ship all schema changes as migration files
+- Test migrations locally before deploying
+
+---
+
+## Redis Streams (App-to-App Communication)
+
+### Overview
+Redis Streams provide guaranteed-delivery, ordered messaging between apps. Unlike Redis Pub/Sub (used for platform events), Streams persist messages and support consumer groups.
+
+### Declaration
+Apps declare their streams in the manifest:
+
+```json
+{
+  "config": {
+    "redis_streams_publish": ["myapp.events.created"],
+    "redis_streams_subscribe": ["other_app.commands.process"]
+  }
+}
+```
+
+### Stream Naming
+- Declared names are prefixed by the platform: `latarnia:streams:{declared_name}`
+- Example: `"myapp.events.created"` becomes `latarnia:streams:myapp.events.created`
+
+### Publishing
+Each stream has exactly ONE publisher app (enforced at registration). Use `XADD`:
+
+```python
+import redis, json
+from datetime import datetime
+
+r = redis.from_url(redis_url)
+r.xadd("latarnia:streams:myapp.events.created", {
+    "source": "my_app",
+    "timestamp": str(int(datetime.now().timestamp())),
+    "version": "1.0",
+    "data": json.dumps({"item_id": 42, "action": "created"}),
+})
+```
+
+### Subscribing
+The platform creates a consumer group per subscribing app. Use `XREADGROUP` and `XACK`:
+
+```python
+r = redis.from_url(redis_url)
+group = "my_app"  # Your app_id is the consumer group name
+consumer = "my_app-1"
+
+while True:
+    messages = r.xreadgroup(group, consumer,
+        {"latarnia:streams:other_app.commands.process": ">"}, count=10, block=5000)
+    for stream, entries in messages:
+        for msg_id, data in entries:
+            # Process message
+            payload = json.loads(data[b"data"])
+            # ... handle payload ...
+            r.xack(stream, group, msg_id)
+```
+
+### Constraints
+- Two apps CANNOT publish to the same stream (collision error at registration)
+- Multiple apps CAN subscribe to the same stream
+- The platform does NOT validate message contents — apps own their schemas
+- Stream retention uses Redis defaults
+
+---
+
+## Web UI (Reverse Proxy)
+
+### Overview
+Apps with `has_web_ui: true` serve their own HTTP-based web UI on their assigned port. The platform reverse-proxies requests from `/apps/{app_name}/` to the app.
+
+### Requirements
+- Serve HTML on `GET /` (the web UI root)
+- All assets (CSS, JS, images) must use relative paths (not absolute `/` paths)
+- The app does NOT know about the `/apps/{app_name}/` prefix — the platform strips it
+
+### Platform Behavior
+- `GET /apps/crm/dashboard` → proxied to `http://localhost:{port}/dashboard`
+- `GET /apps/crm/static/style.css` → proxied to `http://localhost:{port}/static/style.css`
+- WebSocket connections at `/apps/crm/ws` → proxied to `ws://localhost:{port}/ws`
+- Headers added: `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`
+
+### Error Responses
+- App not found: 404
+- App not running: 503 with friendly error page
+- App has no web UI declared: 404
+- Connection timeout: 504
+
+### Example
+A minimal web UI in a FastAPI app:
+
+```python
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+
+app = FastAPI()
+
+@app.get("/", response_class=HTMLResponse)
+async def web_ui():
+    return "<html><body><h1>My App</h1></body></html>"
+```
+
+---
+
+## Example Apps
+
+Two example apps are provided in the `examples/` directory:
+
+### example_companion
+Minimal service app that serves as a dependency target. Contains only a `/health` endpoint.
+
+### example_full_app
+Full-featured service app demonstrating all P-0002 capabilities:
+- `latarnia.json` with all new fields (database, mcp_server, has_web_ui, redis_streams, requires)
+- `migrations/` directory with 3 SQL migration files
+- MCP server exposing 3 tools (list_items, add_item, get_status)
+- Web UI (HTML page served by FastAPI at `/`)
+- Redis Streams publisher (example.events.created) and subscriber (example.commands.process)
+- REST API with `/health`, `/ui`, `/api/items`, `/api/events`
+- Depends on `example_companion` >= 1.0.0
+
+To use the example apps, copy them to the `apps/` directory (companion first, then full app).
+
 This specification provides complete guidance for developing Latarnia-compatible apps while maintaining consistency and proper integration with the main system.
