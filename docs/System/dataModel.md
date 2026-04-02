@@ -79,9 +79,11 @@ erDiagram
 
 ### App Registry Schema
 
+The registry entry (`AppRegistryEntry`) was extended in P-0002 with capability sub-objects for database, MCP, and stream state. All fields are optional — apps that do not declare a capability have `null` for that info block.
+
 ```mermaid
 erDiagram
-    APP_REGISTRY {
+    APP_REGISTRY_ENTRY {
         string app_id PK
         string name
         string type
@@ -89,49 +91,88 @@ erDiagram
         string version
         string status
         string path
-        object manifest
-        object runtime_info
         datetime discovered_at
         datetime last_updated
     }
-    
-    MANIFEST {
+
+    APP_MANIFEST {
         string name
         string type
         string description
         string version
-        string main
-        string requirements
-        object endpoints
-        object setup_commands
-        object environment
+        string author
+        string main_file
     }
-    
-    RUNTIME_INFO {
+
+    APP_CONFIG {
+        bool has_UI
+        bool has_web_ui
+        bool redis_required
+        bool database
+        bool mcp_server
+        int mcp_port
+        bool logs_dir
+        bool data_dir
+        bool auto_start
+        string restart_policy
+        list redis_streams_publish
+        list redis_streams_subscribe
+    }
+
+    MANIFEST_DEPENDENCY {
+        string app
+        string min_version
+    }
+
+    APP_RUNTIME_INFO {
         int assigned_port
         string process_id
         string service_name
         datetime started_at
         datetime last_health_check
         object resource_usage
+        string error_message
+        string service_status
+        string health_status
     }
-    
-    ENDPOINTS {
-        string health
-        string ui
-        string metrics
+
+    DATABASE_INFO {
+        bool provisioned
+        string database_name
+        string role_name
+        string connection_url
+        list applied_migrations
+        datetime last_migration_at
     }
-    
-    RESOURCE_USAGE {
-        float cpu_percent
-        int memory_mb
-        int disk_mb
+
+    MCP_INFO {
+        bool enabled
+        int mcp_port
+        bool healthy
+        list registered_tools
+        datetime last_tool_sync
     }
-    
-    APP_REGISTRY ||--|| MANIFEST : contains
-    APP_REGISTRY ||--|| RUNTIME_INFO : contains
-    MANIFEST ||--|| ENDPOINTS : contains
-    RUNTIME_INFO ||--|| RESOURCE_USAGE : contains
+
+    STREAM_INFO {
+        list publish_streams
+        list subscribe_streams
+        list consumer_groups
+    }
+
+    DEPENDENCY_STATUS {
+        string app
+        string min_version
+        bool satisfied
+    }
+
+    APP_REGISTRY_ENTRY ||--|| APP_MANIFEST : manifest
+    APP_REGISTRY_ENTRY ||--|| APP_RUNTIME_INFO : runtime_info
+    APP_REGISTRY_ENTRY ||--o| DATABASE_INFO : database_info
+    APP_REGISTRY_ENTRY ||--o| MCP_INFO : mcp_info
+    APP_REGISTRY_ENTRY ||--o| STREAM_INFO : stream_info
+    APP_REGISTRY_ENTRY ||--o{ DEPENDENCY_STATUS : dependencies
+    APP_MANIFEST ||--|| APP_CONFIG : config
+    APP_MANIFEST ||--o{ MANIFEST_DEPENDENCY : requires
 ```
 
 ### System Metrics Schema
@@ -201,6 +242,24 @@ erDiagram
     SYSTEM_METRICS ||--o{ PROCESS_INFO : contains
     SYSTEM_METRICS ||--|| REDIS_STATUS : contains
 ```
+
+### Postgres Per-App Database Schema
+
+Each app with `database: true` receives its own Postgres database (`latarnia_{app_name}`) and role (`latarnia_{app_name}_role`). The platform creates the following tracking table in every provisioned database.
+
+```mermaid
+erDiagram
+    SCHEMA_VERSIONS {
+        serial id PK
+        text migration_file
+        integer migration_number
+        text checksum
+        timestamptz applied_at
+        integer duration_ms
+    }
+```
+
+Migration files are named with a numeric prefix (e.g., `001_initial.sql`, `002_add_tags.sql`). The platform runs only migrations whose `migration_file` is not already recorded in `schema_versions`.
 
 ### MCP Gateway In-Memory Model
 
@@ -302,6 +361,18 @@ latarnia:system:metrics      # Latest system metrics
 latarnia:ports:allocated     # Port allocation tracking
 latarnia:health:*            # Health check results
 ```
+
+### Redis Streams
+
+Apps that declare `redis_streams_publish` or `redis_streams_subscribe` in their manifest have streams and consumer groups provisioned by the platform at discovery time.
+
+```
+latarnia:streams:{declared_name}   # Stream key (e.g. latarnia:streams:crm.contacts.created)
+```
+
+- **Publishers**: one owner per stream (collision causes registration failure). The platform records stream ownership in `StreamManager._publisher_map` (in-memory).
+- **Subscribers**: one consumer group per subscribing app, named `{app_id}` within the stream. Tracked in `StreamManager._subscriber_groups`.
+- **App usage**: apps `XADD` to their publish streams and `XREADGROUP` / `XACK` from their subscribe consumer groups using a Redis connection they manage themselves.
 
 ### Event Message Format
 ```json
