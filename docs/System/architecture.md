@@ -14,6 +14,7 @@ graph TB
             UIMgr[UI Manager<br/>Streamlit TTL]
             SysMon[System Monitor<br/>Hardware Metrics]
             MCPGateway[MCP Gateway<br/>/mcp SSE endpoint]
+            WebProxy[Web Proxy<br/>/apps/{name}/{path}]
         end
         
         subgraph "Message Bus"
@@ -41,11 +42,13 @@ graph TB
     
     User --> Browser
     Browser --> FastAPI
+    Browser -->|/apps/...| WebProxy
     MCPClient -->|MCP SSE| MCPGateway
     FastAPI --> AppMgr
     FastAPI --> SvcMgr
     FastAPI --> UIMgr
     FastAPI --> SysMon
+    WebProxy --> AppMgr
     
     AppMgr --> Redis
     SvcMgr --> systemd
@@ -54,6 +57,8 @@ graph TB
 
     MCPGateway -->|MCP SSE| SvcApp1
     MCPGateway -->|MCP SSE| SvcApp2
+    WebProxy -->|HTTP + WebSocket| SvcApp1
+    WebProxy -->|HTTP + WebSocket| SvcApp2
     
     systemd --> SvcApp1
     systemd --> SvcApp2
@@ -141,6 +146,17 @@ graph TB
   - Health monitoring data
   - Configuration change notifications
   - App status updates
+
+### 8. Web Proxy
+- **Purpose**: Reverse proxy that exposes app-owned web UIs through the platform
+- **Routes**: `GET|POST|... /apps/{app_name}/{path}` (HTTP), `WS /apps/{app_name}/{path}` (WebSocket)
+- **Redirect**: Bare `/apps/{app_name}` issues a 307 to `/apps/{app_name}/`
+- **Path stripping**: `/apps/crm/dashboard` → `/dashboard` forwarded to the app
+- **HTTP client**: Shared `httpx.AsyncClient` (30 s timeout, no redirect following); closed during lifespan shutdown
+- **WebSocket client**: Per-connection `aiohttp.ClientSession` with bidirectional frame relay
+- **Header forwarding**: `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`; hop-by-hop headers stripped
+- **Error pages**: HTML-escaped pages for 404 (not found / no web UI), 503 (not running / connect error), 504 (timeout), 502 (unexpected error)
+- **Guard conditions**: App must exist in registry, have `has_web_ui: true`, and status `running`
 
 ## Application Types
 
@@ -295,6 +311,38 @@ sequenceDiagram
     TTL->>Process: Terminate process
     Process->>Redis: Publish app_stopped event
     TTL->>UM: Cleanup resources
+```
+
+### Web Proxy Request Flow
+```mermaid
+sequenceDiagram
+    participant Browser as User Browser
+    participant WP as Web Proxy<br/>(FastAPI router)
+    participant Reg as App Registry
+    participant App as Service App<br/>:810x
+
+    Browser->>WP: GET /apps/crm/dashboard
+    WP->>Reg: get_app_by_name("crm")
+    Reg-->>WP: port=8101, has_web_ui=true, status=running
+
+    WP->>App: GET /dashboard<br/>X-Forwarded-For/Proto/Host
+    App-->>WP: 200 OK + headers + body
+    WP-->>Browser: 200 OK (hop-by-hop headers stripped)
+
+    Note over Browser,App: WebSocket upgrade
+
+    Browser->>WP: GET /apps/crm/ws (Upgrade: websocket)
+    WP->>Reg: get_app_by_name("crm")
+    Reg-->>WP: port=8101, running
+    WP->>App: aiohttp ws_connect ws://localhost:8101/ws
+    App-->>WP: 101 Switching Protocols
+    WP-->>Browser: 101 Switching Protocols
+    loop Bidirectional relay
+        Browser->>WP: WS frame
+        WP->>App: WS frame
+        App->>WP: WS frame
+        WP->>Browser: WS frame
+    end
 ```
 
 ## Security Model
