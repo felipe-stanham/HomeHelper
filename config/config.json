@@ -34,5 +34,11 @@
   "system": {
     "main_port": 8000,
     "host": "0.0.0.0"
+  },
+  "mcp": {
+    "enabled": true,
+    "transport": "sse",
+    "gateway_path": "/mcp",
+    "tool_sync_interval_seconds": 300
   }
 }

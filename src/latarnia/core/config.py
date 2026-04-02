@@ -52,6 +52,14 @@ class SystemConfig(BaseModel):
     host: str = "0.0.0.0"
 
 
+class MCPConfig(BaseModel):
+    enabled: bool = False
+    transport: str = "sse"
+    gateway_path: str = "/mcp"
+    # Reserved for future periodic tool resync; currently tools sync on lifecycle events only
+    tool_sync_interval_seconds: int = 300
+
+
 class LatarniaConfig(BaseSettings):
     redis: RedisConfig = Field(default_factory=RedisConfig)
     postgres: PostgresConfig = Field(default_factory=PostgresConfig)
@@ -60,6 +68,7 @@ class LatarniaConfig(BaseSettings):
     process_manager: ProcessManagerConfig = Field(default_factory=ProcessManagerConfig)
     health_check_interval_seconds: int = 60
     system: SystemConfig = Field(default_factory=SystemConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
 
     class Config:
         env_prefix = "LATARNIA_"

@@ -159,7 +159,90 @@ flowchart TD
     MarkError --> NextApp
 ```
 
-## 5. Redis Event Pub/Sub Flow
+## 5. MCP Gateway — Tool Discovery and Routing
+
+How the MCP gateway aggregates tools from all MCP-enabled apps at startup and routes tool calls from external clients. References cap-006 and flow-05 in P-0002.
+
+```mermaid
+sequenceDiagram
+    participant Client as MCP Client
+    participant GW as MCP Gateway :8000/mcp
+    participant Reg as App Registry
+    participant App1 as App1 MCP Server
+    participant App2 as App2 MCP Server
+
+    Note over GW: Platform startup — build tool index
+
+    GW->>Reg: Get all MCP-enabled apps
+    Reg-->>GW: app1 (port 9001), app2 (port 9002)
+
+    GW->>App1: MCP SSE connect + list_tools
+    App1-->>GW: [tool_a, tool_b]
+    GW->>App2: MCP SSE connect + list_tools
+    App2-->>GW: [tool_c]
+
+    GW->>GW: Build namespaced index<br/>app1.tool_a, app1.tool_b, app2.tool_c
+
+    Note over Client,App2: Runtime — client connects via SSE
+
+    Client->>GW: GET /mcp/sse (SSE connect)
+    Client->>GW: initialize + list_tools
+    GW-->>Client: app1.tool_a, app1.tool_b, app2.tool_c
+
+    Client->>GW: call_tool(app1.tool_a, args)
+    GW->>Reg: Is app1 healthy?
+    Reg-->>GW: Yes
+    GW->>App1: call_tool(tool_a, args)
+    App1-->>GW: result content
+    GW-->>Client: result content
+
+    Note over Client,App2: Unhealthy app scenario
+
+    Client->>GW: call_tool(app2.tool_c, args)
+    GW->>Reg: Is app2 healthy?
+    Reg-->>GW: No (health check failed)
+    GW-->>Client: Error: App app2 is currently unavailable
+```
+
+## 6. MCP Tool Sync on App Lifecycle Events
+
+How the gateway keeps the tool index in sync when apps start, stop, or undergo a version bump. References cap-006, cap-011.
+
+```mermaid
+flowchart TD
+    Event([App lifecycle event]) --> Type{Event type?}
+
+    Type -- App started --> HasMCP{"App has
+    mcp_server: true?"}
+    HasMCP -- No --> Done([No MCP action])
+    HasMCP -- Yes --> FetchTools[list_tools from app MCP server]
+    FetchTools --> GotTools{Tools returned?}
+    GotTools -- No --> LogWarn[Log warning, index unchanged]
+    LogWarn --> Done
+
+    GotTools -- Yes --> HasOldTools{Prior tools
+    registered?}
+    HasOldTools -- No --> AddToIndex[Add namespaced tools to index]
+    HasOldTools -- Yes --> CompatCheck{Backward compat OK?
+    set_diff old minus new = empty?}
+    CompatCheck -- No --> MarkUnhealthy["Mark app mcp_info.healthy = False.
+    Return HTTP 409.
+    App stopped."]
+    MarkUnhealthy --> Done
+
+    CompatCheck -- Yes --> RemoveOld[Remove old tools for app from index]
+    RemoveOld --> AddToIndex
+    AddToIndex --> UpdateReg["Update registry: registered_tools,
+    last_tool_sync, healthy=True"]
+    UpdateReg --> Done
+
+    Type -- App stopped --> RemoveTools[Remove all tools for app from index]
+    RemoveTools --> Done
+
+    Type -- Version bump --> FetchTools
+```
+
+## 7. Redis Event Pub/Sub Flow
 
 How apps publish events through Redis and how the Latarnia event subscriber captures them for the dashboard activity feed.
 

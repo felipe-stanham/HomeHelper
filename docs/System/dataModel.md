@@ -59,8 +59,23 @@ erDiagram
     CONFIG ||--|| LOGGING : contains
     CONFIG ||--|| PROCESS_MANAGER : contains
     CONFIG ||--|| SYSTEM : contains
+    CONFIG ||--|| MCP_CONFIG : contains
     PROCESS_MANAGER ||--|| PORT_RANGE : contains
 ```
+
+### MCP Configuration Schema
+
+```mermaid
+erDiagram
+    MCP_CONFIG {
+        bool enabled
+        string transport
+        string gateway_path
+        int tool_sync_interval_seconds
+    }
+```
+
+`enabled` defaults to `false`. When `true`, the gateway is initialized and mounted at `gateway_path` (default `/mcp`) using SSE transport.
 
 ### App Registry Schema
 
@@ -186,6 +201,38 @@ erDiagram
     SYSTEM_METRICS ||--o{ PROCESS_INFO : contains
     SYSTEM_METRICS ||--|| REDIS_STATUS : contains
 ```
+
+### MCP Gateway In-Memory Model
+
+The MCP gateway maintains an in-memory tool index. This model is not persisted to disk between restarts; it is rebuilt from running apps on startup.
+
+```mermaid
+classDiagram
+    class MCPGateway {
+        +Dict~str_ToolIndexEntry~ _tool_index
+        +Server _mcp_server
+        +initialize() Starlette
+        +on_app_started(app_id) bool
+        +on_app_stopped(app_id) None
+        +on_app_version_bump(app_id) bool
+        +get_tool_index() Dict
+        +get_status() dict
+        +check_backward_compatibility(old_tools, new_tools) Tuple
+    }
+
+    class ToolIndexEntry {
+        +str app_id
+        +str app_name
+        +int mcp_port
+        +str original_tool_name
+        +dict tool_schema
+        +to_dict() dict
+    }
+
+    MCPGateway "1" --> "*" ToolIndexEntry : _tool_index key = app_name.tool_name
+```
+
+Tool index key format: `"{app_name}.{tool_name}"` — no nesting beyond one level.
 
 ## File System Structure
 
