@@ -13,6 +13,7 @@ graph TB
             SvcMgr[Service Manager<br/>systemd Integration]
             UIMgr[UI Manager<br/>Streamlit TTL]
             SysMon[System Monitor<br/>Hardware Metrics]
+            MCPGateway[MCP Gateway<br/>/mcp SSE endpoint]
         end
         
         subgraph "Message Bus"
@@ -34,11 +35,13 @@ graph TB
     
     subgraph "External"
         Browser[Web Browser]
+        MCPClient[MCP Client<br/>Claude Desktop etc.]
         User[User]
     end
     
     User --> Browser
     Browser --> FastAPI
+    MCPClient -->|MCP SSE| MCPGateway
     FastAPI --> AppMgr
     FastAPI --> SvcMgr
     FastAPI --> UIMgr
@@ -48,6 +51,9 @@ graph TB
     SvcMgr --> systemd
     UIMgr --> StreamlitApp1
     UIMgr --> StreamlitApp2
+
+    MCPGateway -->|MCP SSE| SvcApp1
+    MCPGateway -->|MCP SSE| SvcApp2
     
     systemd --> SvcApp1
     systemd --> SvcApp2
@@ -114,7 +120,20 @@ graph TB
   - Process metrics collection
   - Health status determination
 
-### 6. Redis Message Bus
+### 6. MCP Gateway
+- **Purpose**: Aggregates MCP tools from all MCP-enabled apps and exposes them to external clients through a single endpoint
+- **Mount path**: `/mcp` (configurable via `MCPConfig.gateway_path`)
+- **Transport**: SSE (`mcp.server.sse.SseServerTransport`) — gateway acts as MCP server to clients and MCP client to apps
+- **Responsibilities**:
+  - Build and maintain a namespaced tool index (`app_name.tool_name`)
+  - Proxy `list_tools` responses from the in-memory index
+  - Proxy `call_tool` requests to the appropriate app's MCP server (localhost on declared `mcp_port`)
+  - Skip unhealthy apps on tool calls (return error immediately)
+  - Sync tool index on app start, stop, and version bump
+  - Enforce backward compatibility on version bumps (set-difference check; reject and stop app on violation)
+  - Expose `GET /api/mcp/status` and `GET /api/mcp/tools` REST endpoints
+
+### 7. Redis Message Bus
 - **Purpose**: Inter-app communication and event system
 - **Responsibilities**:
   - Pub/Sub messaging between apps
@@ -307,18 +326,20 @@ sequenceDiagram
 
 ### Development Environment
 ```
-localhost:8000 (Main Dashboard)
-├── localhost:8100-8199 (Service Apps)
-├── localhost:8501+ (Streamlit Apps)
-└── localhost:6379 (Redis)
+localhost:8000 (Main Dashboard + API + MCP Gateway at /mcp)
+├── localhost:8100-8199 (Service App REST servers)
+├── localhost:9001-9099 (Service App MCP servers, declared in manifest)
+├── localhost:8501+     (Streamlit Apps)
+└── localhost:6379      (Redis)
 ```
 
 ### Production Environment (Raspberry Pi)
 ```
-raspberrypi.local:8000 (Main Dashboard)
-├── Internal:8100-8199 (Service Apps)
-├── Internal:8501+ (Streamlit Apps)
-└── Internal:6379 (Redis)
+raspberrypi.local:8000 (Main Dashboard + API + MCP Gateway at /mcp)
+├── Internal:8100-8199 (Service App REST servers)
+├── Internal:9001-9099 (Service App MCP servers, declared in manifest)
+├── Internal:8501+     (Streamlit Apps)
+└── Internal:6379      (Redis)
 ```
 
 ### File System Layout
