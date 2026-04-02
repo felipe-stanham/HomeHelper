@@ -276,3 +276,77 @@ sequenceDiagram
     Store-->>Dash: Recent events list
     Dash->>Dash: Format timestamps,<br/>extract messages
 ```
+
+## 8. Web UI Reverse Proxy Request Flow
+
+How the platform proxies HTTP and WebSocket requests to app-owned web UIs. References cap-008 in P-0002.
+
+```mermaid
+sequenceDiagram
+    participant Browser as User Browser
+    participant Proxy as Web Proxy<br/>/apps/{name}/{path}
+    participant Reg as App Registry
+    participant App as App Web Server<br/>:810x
+
+    Browser->>Proxy: GET /apps/crm/ (HTTP)
+    Proxy->>Reg: Lookup app crm
+    Reg-->>Proxy: port=8101, has_web_ui=true, running
+
+    Proxy->>App: GET / + X-Forwarded-For/Proto/Host headers
+    App-->>Proxy: 200 OK (HTML)
+    Proxy-->>Browser: 200 OK (HTML, stripped response headers)
+
+    Note over Browser,App: Static assets
+
+    Browser->>Proxy: GET /apps/crm/static/style.css
+    Proxy->>App: GET /static/style.css
+    App-->>Proxy: 200 OK (CSS)
+    Proxy-->>Browser: 200 OK (CSS)
+
+    Note over Browser,App: WebSocket upgrade (via aiohttp)
+
+    Browser->>Proxy: GET /apps/crm/ws (Upgrade: websocket)
+    Proxy->>App: WS connect ws://localhost:8101/ws
+    App-->>Proxy: 101 Switching Protocols
+    Proxy-->>Browser: 101 Switching Protocols
+    Browser->>Proxy: WS frames (bidirectional relay)
+    Proxy->>App: WS frames (bidirectional relay)
+
+    Note over Browser,App: Error scenarios
+
+    Browser->>Proxy: GET /apps/offline_app/
+    Proxy->>Reg: Lookup offline_app
+    Reg-->>Proxy: status=stopped
+    Proxy-->>Browser: 503 App Unavailable (HTML error page)
+
+    Browser->>Proxy: GET /apps/unknown/
+    Proxy->>Reg: Lookup unknown
+    Reg-->>Proxy: not found
+    Proxy-->>Browser: 404 App Not Found (HTML error page)
+```
+
+```mermaid
+flowchart TD
+    Request([Incoming request<br/>/apps/app_name/path]) --> Redirect{Bare /apps/app_name<br/>no trailing slash?}
+    Redirect -- Yes --> HTTP307[307 Redirect to /apps/app_name/]
+
+    Redirect -- No --> LookupApp[Lookup app in registry]
+    LookupApp --> Exists{App found?}
+    Exists -- No --> E404[404 Not Found page]
+
+    Exists -- Yes --> HasWebUI{has_web_ui = true?}
+    HasWebUI -- No --> E404NoUI[404 No Web UI page]
+
+    HasWebUI -- Yes --> IsRunning{status = running?}
+    IsRunning -- No --> E503[503 App Unavailable page]
+
+    IsRunning -- Yes --> IsWS{WebSocket upgrade?}
+    IsWS -- Yes --> WSProxy[aiohttp bidirectional relay<br/>to ws://localhost:PORT/path]
+    IsWS -- No --> HTTPProxy[httpx.AsyncClient request<br/>to http://localhost:PORT/path]
+
+    HTTPProxy --> ConnectOk{Connect OK?}
+    ConnectOk -- ConnectError --> E503Connect[503 Cannot connect page]
+    ConnectOk -- Timeout --> E504[504 Gateway Timeout page]
+    ConnectOk -- Other error --> E502[502 Bad Gateway page]
+    ConnectOk -- Success --> ForwardResp[Forward status + headers + body]
+```

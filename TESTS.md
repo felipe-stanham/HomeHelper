@@ -119,3 +119,21 @@ Critical-path tests for Latarnia. Each test is declarative — Claude Code gener
 - **test_mcp_backward_compat_pass:** Call `MCPGateway.check_backward_compatibility(["search", "add", "delete"], ["search", "add", "delete", "export"])`. -> Returns `(True, [])`.
 
 - **test_mcp_backward_compat_fail:** Call `MCPGateway.check_backward_compatibility(["search", "add", "delete"], ["search", "add"])`. -> Returns `(False, ["delete"])`.
+
+## Web UI Reverse Proxy
+
+- **test_proxy_app_not_found:** Set `web_proxy.app_manager` to a mock with `registry.get_app_by_name("nonexistent")` returning `None`. Call `_lookup_app("nonexistent")`. -> Returns `(None, HTMLResponse)` with status 404 and body containing "App Not Found".
+
+- **test_proxy_app_no_web_ui:** Mock `registry.get_app_by_name("crm")` to return an app with `manifest.config.has_web_ui=False`. Call `_lookup_app("crm")`. -> Returns `(None, HTMLResponse)` with status 404 and body containing "No Web UI".
+
+- **test_proxy_app_not_running:** Mock `registry.get_app_by_name("crm")` to return an app with `has_web_ui=True` but `status="stopped"`. Call `_lookup_app("crm")`. -> Returns `(None, HTMLResponse)` with status 503 and body containing "Unavailable".
+
+- **test_proxy_app_lookup_success:** Mock `registry.get_app_by_name("crm")` to return an app with `has_web_ui=True`, `status="running"`, `runtime_info.assigned_port=8101`. Call `_lookup_app("crm")`. -> Returns `(app_entry, None)`.
+
+- **test_proxy_forwarded_headers:** Create a mock `Request` with `client.host="192.168.1.10"`, `url.scheme="https"`, `headers={"host": "latarnia:8000", "accept": "text/html"}`. Call `_build_forwarded_headers(request)`. -> Returns dict with `x-forwarded-for="192.168.1.10"`, `x-forwarded-proto="https"`, `x-forwarded-host="latarnia:8000"`. "host" header is removed. "accept" header is preserved.
+
+- **test_proxy_http_success:** Use `httpx.AsyncClient` with FastAPI `TestClient` (ASGI transport). Mock a running app `crm` with `has_web_ui=True` on port 8101. Mock `httpx.AsyncClient.request` to return a 200 response with body `"<h1>CRM</h1>"`. Send GET to `/apps/crm/dashboard`. -> Response status 200, body contains `"<h1>CRM</h1>"`.
+
+- **test_proxy_http_connect_error:** Mock a running app `crm`. Mock `httpx.AsyncClient.request` to raise `httpx.ConnectError`. Send GET to `/apps/crm/`. -> Response status 503 with body containing "Cannot connect".
+
+- **test_proxy_bare_app_redirect:** Mock a running app `crm` with `has_web_ui=True`. Send GET to `/apps/crm` (no trailing slash). -> Response status 307 with `Location: /apps/crm/`.

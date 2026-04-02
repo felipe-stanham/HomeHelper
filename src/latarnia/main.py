@@ -124,6 +124,8 @@ async def lifespan(app: FastAPI):
     macos_process_manager.stop_all()
     logger.info("Stopping all Streamlit apps...")
     streamlit_manager.stop_all()
+    logger.info("Closing web proxy HTTP client...")
+    await web_proxy_module.shutdown()
     logger.info("Shutdown complete")
 
 
@@ -166,6 +168,11 @@ if config_manager.config.mcp.enabled:
     mcp_gateway = MCPGateway(config_manager, app_manager)
     app_manager.mcp_gateway = mcp_gateway
 
+# Initialize web UI proxy
+from .web.web_proxy import router as web_proxy_router
+from .web import web_proxy as web_proxy_module
+web_proxy_module.app_manager = app_manager
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -177,6 +184,9 @@ app = FastAPI(
 
 # Include web dashboard routes
 app.include_router(dashboard_router)
+
+# Include web UI proxy routes (catch-all, must be after specific routes)
+app.include_router(web_proxy_router)
 
 
 @app.get("/")
