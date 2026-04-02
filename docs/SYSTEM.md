@@ -24,7 +24,7 @@ Latarnia is a unified home automation platform for Raspberry Pi 5 (8GB RAM) that
 | ID      | Name            | Status      | Summary                                              |
 |---------|-----------------|-------------|------------------------------------------------------|
 | P-0001  | Latarnia Core | [DONE]      | Full platform: core infra, app/service/UI management, dashboard, deployment |
-| P-0002  | Latarnia        | [ACTIVE]    | Platform rename + evolved manifests, Postgres, MCP gateway, Redis Streams, web UI proxy |
+| P-0002  | Latarnia        | [DONE]      | Platform rename + evolved manifests, Postgres, MCP gateway, Redis Streams, web UI proxy |
 
 ## Deployment
 
