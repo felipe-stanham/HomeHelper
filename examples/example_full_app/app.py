@@ -1,37 +1,259 @@
 """
 Example Full App — Demonstrates all Latarnia P-0002 capabilities.
 
-This app exercises:
-- Database (Postgres via --db-url)
-- MCP server (tools on --mcp-port)
-- Web UI (HTML served on the REST port)
-- Redis Streams (publish and subscribe)
-- REST API with /health endpoint
-- Dependency on example_companion (via requires)
+This app exercises every platform feature:
+- Database: connects via --db-url, queries items/events/tags tables
+- MCP server: tools that read/write the database
+- Web UI: HTML dashboard served at / with live data from the API
+- Redis Streams: publishes events on item creation, subscribes to commands
+- Logging: writes to --logs-dir
+- Data: persists app state to --data-dir
+- Dependency: requires example_companion >= 1.0.0
 
 Usage:
     python app.py --port 8101 --mcp-port 9001 \
-        --db-url postgresql://... --redis-url redis://localhost:6379/0
+        --db-url postgresql://... --redis-url redis://localhost:6379/0 \
+        --data-dir /opt/latarnia/data --logs-dir /opt/latarnia/logs
 """
 
 import argparse
 import asyncio
 import json
 import logging
+import os
 import threading
+import time
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
 import redis
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 
+# ---------------------------------------------------------------------------
+# Global state (set by main())
+# ---------------------------------------------------------------------------
+
+db_url: Optional[str] = None
+redis_url: Optional[str] = None
+mcp_port: Optional[int] = None
+data_dir: Optional[Path] = None
+logs_dir: Optional[Path] = None
+
 logger = logging.getLogger("example_full_app")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+
+def setup_logging(logs_path: Optional[Path]):
+    """Configure logging to both console and file (if logs_dir provided)."""
+    handlers = [logging.StreamHandler()]
+    if logs_path:
+        logs_path.mkdir(parents=True, exist_ok=True)
+        log_file = logs_path / "example_full_app.log"
+        handlers.append(logging.FileHandler(str(log_file)))
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=handlers,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Database helpers
+# ---------------------------------------------------------------------------
+
+def _get_db_connection():
+    """Get a psycopg database connection. Returns None if no db_url."""
+    if not db_url:
+        return None
+    try:
+        import psycopg
+        return psycopg.connect(db_url)
+    except Exception as e:
+        logger.error("Database connection failed: %s", e)
+        return None
+
+
+def db_list_items():
+    """Fetch all items from the database."""
+    conn = _get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, description, status, created_at FROM items ORDER BY id")
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": r[0], "name": r[1], "description": r[2],
+                    "status": r[3], "created_at": r[4].isoformat() if r[4] else None,
+                }
+                for r in rows
+            ]
+    except Exception as e:
+        logger.error("Failed to list items: %s", e)
+        return []
+    finally:
+        conn.close()
+
+
+def db_add_item(name: str, description: str = "") -> dict:
+    """Insert an item and return it."""
+    conn = _get_db_connection()
+    if not conn:
+        raise RuntimeError("Database not available")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO items (name, description) VALUES (%s, %s) RETURNING id, name, created_at",
+                (name, description),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return {"id": row[0], "name": row[1], "created_at": row[2].isoformat()}
+    except Exception as e:
+        conn.rollback()
+        logger.error("Failed to add item: %s", e)
+        raise
+    finally:
+        conn.close()
+
+
+def db_list_events():
+    """Fetch all events from the database."""
+    conn = _get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, item_id, event_type, payload, created_at FROM events ORDER BY id DESC LIMIT 50")
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": r[0], "item_id": r[1], "event_type": r[2],
+                    "payload": r[3], "created_at": r[4].isoformat() if r[4] else None,
+                }
+                for r in rows
+            ]
+    except Exception as e:
+        logger.error("Failed to list events: %s", e)
+        return []
+    finally:
+        conn.close()
+
+
+def db_add_event(item_id: int, event_type: str, payload: dict):
+    """Record an event in the database."""
+    conn = _get_db_connection()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO events (item_id, event_type, payload) VALUES (%s, %s, %s)",
+                (item_id, event_type, json.dumps(payload)),
+            )
+            conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error("Failed to add event: %s", e)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Data directory helpers
+# ---------------------------------------------------------------------------
+
+def _get_state_file() -> Optional[Path]:
+    if not data_dir:
+        return None
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / "example_full_app" / "state.json"
+
+
+def load_state() -> dict:
+    """Load persistent app state from data directory."""
+    state_file = _get_state_file()
+    if state_file and state_file.exists():
+        try:
+            return json.loads(state_file.read_text())
+        except Exception:
+            pass
+    return {"items_created": 0, "events_published": 0, "started_at": datetime.now().isoformat()}
+
+
+def save_state(state: dict):
+    """Persist app state to data directory."""
+    state_file = _get_state_file()
+    if state_file:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps(state, indent=2))
+
+
+# App state (loaded on startup)
+app_state = {}
+
+
+# ---------------------------------------------------------------------------
+# Redis Streams helpers
+# ---------------------------------------------------------------------------
+
+def publish_item_event(item: dict):
+    """Publish an item creation event to the declared stream."""
+    if not redis_url:
+        return
+    try:
+        r = redis.from_url(redis_url)
+        stream_key = "latarnia:streams:example.events.created"
+        r.xadd(stream_key, {
+            "source": "example_full_app",
+            "timestamp": str(int(datetime.now().timestamp())),
+            "version": "1.0",
+            "data": json.dumps({"type": "item_created", "item": item}),
+        })
+        logger.info("Published item_created event for item %s", item.get("id"))
+    except Exception as e:
+        logger.error("Failed to publish stream event: %s", e)
+
+
+def _stream_subscriber(redis_url_str: str):
+    """Background thread: consume commands from the subscribed stream."""
+    try:
+        r = redis.from_url(redis_url_str)
+        stream_key = "latarnia:streams:example.commands.process"
+        group = "example_full_app"
+        consumer = "example_full_app-1"
+
+        # Ensure consumer group exists (may already be created by platform)
+        try:
+            r.xgroup_create(stream_key, group, id="0", mkstream=True)
+        except redis.ResponseError as e:
+            if "BUSYGROUP" not in str(e):
+                raise
+
+        logger.info("Stream subscriber started on %s (group: %s)", stream_key, group)
+
+        while True:
+            try:
+                messages = r.xreadgroup(group, consumer, {stream_key: ">"}, count=10, block=5000)
+                for stream, entries in messages:
+                    for msg_id, data in entries:
+                        payload = data.get(b"data", b"{}").decode()
+                        logger.info("Received command: %s", payload)
+                        r.xack(stream_key, group, msg_id)
+            except Exception as e:
+                logger.warning("Stream read error: %s", e)
+                time.sleep(5)
+    except Exception as e:
+        logger.error("Stream subscriber failed: %s", e)
+
 
 # ---------------------------------------------------------------------------
 # REST API
@@ -49,6 +271,9 @@ async def health():
             "mcp_tools": 3,
             "db_connected": db_url is not None,
             "streams_active": redis_url is not None,
+            "items_created": app_state.get("items_created", 0),
+            "data_dir": str(data_dir) if data_dir else None,
+            "logs_dir": str(logs_dir) if logs_dir else None,
             "last_check": datetime.now().isoformat(),
         },
     }
@@ -62,17 +287,38 @@ async def ui_resources():
 
 @rest_app.get("/api/items")
 async def list_items():
-    return [
-        {"id": 1, "name": "Sample Item", "status": "active", "created_at": "2026-01-01T00:00:00"},
-        {"id": 2, "name": "Another Item", "status": "active", "created_at": "2026-01-02T00:00:00"},
-    ]
+    return db_list_items()
+
+
+@rest_app.post("/api/items")
+async def create_item(name: str, description: str = ""):
+    try:
+        item = db_add_item(name, description)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Record event in DB
+    db_add_event(item["id"], "created", {"name": name})
+
+    # Publish to Redis Stream
+    publish_item_event(item)
+
+    # Update app state
+    app_state["items_created"] = app_state.get("items_created", 0) + 1
+    app_state["events_published"] = app_state.get("events_published", 0) + 1
+    save_state(app_state)
+
+    return item
 
 
 @rest_app.get("/api/events")
 async def list_events():
-    return [
-        {"id": 1, "item_id": 1, "event_type": "created", "created_at": "2026-01-01T00:00:00"},
-    ]
+    return db_list_events()
+
+
+@rest_app.get("/api/state")
+async def get_state():
+    return app_state
 
 
 # ---------------------------------------------------------------------------
@@ -86,44 +332,112 @@ WEB_UI_HTML = """<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Example Full App</title>
     <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
-        table { border-collapse: collapse; width: 100%; }
+        body { font-family: sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background: #f4f4f4; }
         .badge { display: inline-block; padding: 2px 8px; border-radius: 4px;
                  font-size: 0.8rem; color: white; background: #0d6efd; }
+        .section { margin-bottom: 2rem; }
+        form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+        input { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 6px 16px; background: #0d6efd; color: white; border: none;
+                 border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0b5ed7; }
+        #status { color: #666; font-size: 0.9rem; }
     </style>
 </head>
 <body>
     <h1>Example Full App <span class="badge">v1.0.0</span></h1>
-    <p>This is the web UI served by the app and proxied through Latarnia at
-       <code>/apps/example_full_app/</code>.</p>
-    <h2>Capabilities</h2>
-    <ul>
-        <li>Database (Postgres) with 3 migrations</li>
-        <li>MCP server exposing 3 tools</li>
-        <li>Redis Streams: publishes <code>example.events.created</code>,
-            subscribes to <code>example.commands.process</code></li>
-        <li>Depends on <code>example_companion</code> &ge; 1.0.0</li>
-    </ul>
-    <h2>Items</h2>
-    <table>
-        <thead><tr><th>ID</th><th>Name</th><th>Status</th></tr></thead>
-        <tbody id="items"><tr><td colspan="3">Loading...</td></tr></tbody>
-    </table>
+    <p id="status">Loading...</p>
+
+    <div class="section">
+        <h2>Add Item</h2>
+        <form onsubmit="addItem(event)">
+            <input type="text" id="itemName" placeholder="Item name" required>
+            <input type="text" id="itemDesc" placeholder="Description">
+            <button type="submit">Add</button>
+        </form>
+    </div>
+
+    <div class="section">
+        <h2>Items</h2>
+        <table>
+            <thead><tr><th>ID</th><th>Name</th><th>Description</th><th>Status</th><th>Created</th></tr></thead>
+            <tbody id="items"><tr><td colspan="5">Loading...</td></tr></tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Recent Events</h2>
+        <table>
+            <thead><tr><th>ID</th><th>Item</th><th>Type</th><th>Created</th></tr></thead>
+            <tbody id="events"><tr><td colspan="4">Loading...</td></tr></tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Capabilities</h2>
+        <ul>
+            <li>Database (Postgres) with 3 migrations</li>
+            <li>MCP server exposing 3 tools: list_items, add_item, get_status</li>
+            <li>Redis Streams: publishes <code>example.events.created</code>,
+                subscribes to <code>example.commands.process</code></li>
+            <li>Depends on <code>example_companion</code> &ge; 1.0.0</li>
+        </ul>
+    </div>
+
     <script>
-        fetch('/api/items')
-            .then(r => r.json())
-            .then(items => {
-                const tbody = document.getElementById('items');
-                tbody.innerHTML = items.map(i =>
-                    `<tr><td>${i.id}</td><td>${i.name}</td><td>${i.status}</td></tr>`
-                ).join('');
-            })
-            .catch(() => {
-                document.getElementById('items').innerHTML =
-                    '<tr><td colspan="3">Failed to load</td></tr>';
-            });
+        async function loadData() {
+            try {
+                const [items, events, state] = await Promise.all([
+                    fetch('api/items').then(r => r.json()),
+                    fetch('api/events').then(r => r.json()),
+                    fetch('api/state').then(r => r.json()),
+                ]);
+                renderItems(items);
+                renderEvents(events);
+                document.getElementById('status').textContent =
+                    `DB connected: ${state.items_created ?? 0} items created | ` +
+                    `${state.events_published ?? 0} events published`;
+            } catch (e) {
+                document.getElementById('status').textContent = 'Error loading data: ' + e.message;
+            }
+        }
+
+        function renderItems(items) {
+            const tbody = document.getElementById('items');
+            if (!items.length) { tbody.innerHTML = '<tr><td colspan="5">No items yet</td></tr>'; return; }
+            tbody.innerHTML = items.map(i =>
+                `<tr><td>${i.id}</td><td>${i.name}</td><td>${i.description || ''}</td>` +
+                `<td>${i.status || ''}</td><td>${i.created_at || ''}</td></tr>`
+            ).join('');
+        }
+
+        function renderEvents(events) {
+            const tbody = document.getElementById('events');
+            if (!events.length) { tbody.innerHTML = '<tr><td colspan="4">No events yet</td></tr>'; return; }
+            tbody.innerHTML = events.map(e =>
+                `<tr><td>${e.id}</td><td>${e.item_id}</td><td>${e.event_type}</td><td>${e.created_at || ''}</td></tr>`
+            ).join('');
+        }
+
+        async function addItem(evt) {
+            evt.preventDefault();
+            const name = document.getElementById('itemName').value;
+            const desc = document.getElementById('itemDesc').value;
+            try {
+                await fetch(`api/items?name=${encodeURIComponent(name)}&description=${encodeURIComponent(desc)}`,
+                    { method: 'POST' });
+                document.getElementById('itemName').value = '';
+                document.getElementById('itemDesc').value = '';
+                loadData();
+            } catch (e) {
+                alert('Failed to add item: ' + e.message);
+            }
+        }
+
+        loadData();
     </script>
 </body>
 </html>"""
@@ -177,20 +491,35 @@ async def list_tools():
 @mcp_server.call_tool()
 async def call_tool(name: str, arguments: dict):
     if name == "list_items":
-        return [{"type": "text", "text": json.dumps([
-            {"id": 1, "name": "Sample Item", "status": "active"},
-            {"id": 2, "name": "Another Item", "status": "active"},
-        ])}]
+        items = db_list_items()
+        return [{"type": "text", "text": json.dumps(items, default=str)}]
+
     if name == "add_item":
         item_name = arguments.get("name", "Unnamed")
-        return [{"type": "text", "text": f"Added item: {item_name} (id=3)"}]
+        description = arguments.get("description", "")
+        try:
+            item = db_add_item(item_name, description)
+            db_add_event(item["id"], "created_via_mcp", {"name": item_name})
+            publish_item_event(item)
+            app_state["items_created"] = app_state.get("items_created", 0) + 1
+            app_state["events_published"] = app_state.get("events_published", 0) + 1
+            save_state(app_state)
+            return [{"type": "text", "text": json.dumps(item, default=str)}]
+        except Exception as e:
+            return [{"type": "text", "text": f"Error: {e}"}]
+
     if name == "get_status":
         return [{"type": "text", "text": json.dumps({
             "health": "good",
             "db_connected": db_url is not None,
+            "redis_connected": redis_url is not None,
             "mcp_port": mcp_port,
             "tools": 3,
-        })}]
+            "data_dir": str(data_dir) if data_dir else None,
+            "logs_dir": str(logs_dir) if logs_dir else None,
+            "state": app_state,
+        }, default=str)}]
+
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -221,39 +550,11 @@ def _run_mcp_server(port: int):
 
 
 # ---------------------------------------------------------------------------
-# Redis Streams (background publisher example)
-# ---------------------------------------------------------------------------
-
-def _stream_publisher(redis_url_str: str, interval: int = 60):
-    """Publish a heartbeat event to the declared stream every `interval` seconds."""
-    try:
-        r = redis.from_url(redis_url_str)
-        stream_key = "latarnia:streams:example.events.created"
-        while True:
-            r.xadd(stream_key, {
-                "source": "example_full_app",
-                "timestamp": str(int(datetime.now().timestamp())),
-                "version": "1.0",
-                "data": json.dumps({"type": "heartbeat", "time": datetime.now().isoformat()}),
-            })
-            logger.debug("Published heartbeat to %s", stream_key)
-            import time
-            time.sleep(interval)
-    except Exception as e:
-        logger.error("Stream publisher failed: %s", e)
-
-
-# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 
-db_url = None
-redis_url = None
-mcp_port = None
-
-
 def main():
-    global db_url, redis_url, mcp_port
+    global db_url, redis_url, mcp_port, data_dir, logs_dir, app_state
 
     parser = argparse.ArgumentParser(description="Example Full App")
     parser.add_argument("--port", type=int, default=8101, help="REST API port")
@@ -267,23 +568,35 @@ def main():
     db_url = args.db_url
     redis_url = args.redis_url
     mcp_port = args.mcp_port
+    data_dir = Path(args.data_dir) if args.data_dir else None
+    logs_dir = Path(args.logs_dir) if args.logs_dir else None
+
+    # Setup logging (to console + file if logs_dir provided)
+    setup_logging(logs_dir)
+
+    # Load persistent state from data directory
+    app_state = load_state()
 
     logger.info("Starting Example Full App")
     logger.info("  REST port: %d", args.port)
     logger.info("  MCP port:  %d", args.mcp_port)
     logger.info("  DB URL:    %s", "set" if db_url else "not set")
     logger.info("  Redis URL: %s", "set" if redis_url else "not set")
+    logger.info("  Data dir:  %s", data_dir or "not set")
+    logger.info("  Logs dir:  %s", logs_dir or "not set")
+    logger.info("  State:     %s", app_state)
 
     # Start MCP server in background thread
     mcp_thread = threading.Thread(target=_run_mcp_server, args=(args.mcp_port,), daemon=True)
     mcp_thread.start()
 
-    # Start Redis Streams publisher in background thread (if Redis available)
+    # Start Redis Streams subscriber in background thread
     if redis_url:
-        pub_thread = threading.Thread(
-            target=_stream_publisher, args=(redis_url, 60), daemon=True
-        )
-        pub_thread.start()
+        sub_thread = threading.Thread(target=_stream_subscriber, args=(redis_url,), daemon=True)
+        sub_thread.start()
+
+    # Save initial state
+    save_state(app_state)
 
     # Run REST API (with web UI) on main thread
     uvicorn.run(rest_app, host="0.0.0.0", port=args.port, log_level="info")
