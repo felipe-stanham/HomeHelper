@@ -68,15 +68,15 @@ class MacOSProcessManager:
                 redis_url = self.config_manager.get_redis_url()
                 cmd.extend(["--redis-url", redis_url])
             
-            # Add data dir if required
+            # Add data dir if required (use absolute path since CWD is app dir)
             if app.manifest.config.data_dir:
-                data_dir = self.config_manager.get_data_dir(app_id)
+                data_dir = self.config_manager.get_data_dir(app_id).resolve()
                 data_dir.mkdir(parents=True, exist_ok=True)
                 cmd.extend(["--data-dir", str(data_dir)])
-            
-            # Add logs dir if required
+
+            # Add logs dir if required (use absolute path since CWD is app dir)
             if app.manifest.config.logs_dir:
-                logs_dir = self.config_manager.get_logs_dir()
+                logs_dir = self.config_manager.get_logs_dir().resolve()
                 logs_dir.mkdir(parents=True, exist_ok=True)
                 cmd.extend(["--logs-dir", str(logs_dir)])
 

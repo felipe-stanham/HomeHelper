@@ -80,8 +80,8 @@ class DbProvisioner:
             # Run migrations
             applied = []
             migration_files = self._list_migration_files(app_path)
+            already_applied = self._get_applied_migrations(db_name) if migration_files else set()
             if migration_files:
-                already_applied = self._get_applied_migrations(db_name)
                 pending = [f for f in migration_files if f.name not in already_applied]
 
                 if pending:
@@ -93,6 +93,21 @@ class DbProvisioner:
                         return ProvisioningResult(
                             success=False, error_message=error
                         )
+
+            # Include previously applied migrations in the result
+            all_applied = sorted(already_applied | set(applied))
+            applied = all_applied
+
+            # Grant table/sequence privileges to app role so it can
+            # use objects created by the superuser during migrations.
+            self.pg_client.execute_on_db(
+                db_name,
+                f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {role_name}",
+            )
+            self.pg_client.execute_on_db(
+                db_name,
+                f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {role_name}",
+            )
 
             # Build connection URL
             pg = self.config_manager.config.postgres

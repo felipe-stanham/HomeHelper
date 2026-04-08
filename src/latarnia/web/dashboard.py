@@ -24,8 +24,6 @@ async def dashboard(request: Request):
     simple and aligned with the manual-refresh pattern.
     """
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
-        {
-            "request": request,
-        },
     )

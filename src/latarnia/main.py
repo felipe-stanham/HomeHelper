@@ -976,6 +976,36 @@ async def get_app_ui_resource(app_id: str, resource: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/apps/{app_id}/ui/{resource}/{item_id}")
+async def get_app_ui_resource_detail(app_id: str, resource: str, item_id: str):
+    """Fetch detail for a specific resource item"""
+    try:
+        from .web.ui_renderer import ui_renderer
+
+        app_entry = app_manager.registry.get_app(app_id)
+        if not app_entry:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+
+        port = app_entry.runtime_info.assigned_port
+        if not port:
+            raise HTTPException(status_code=400, detail="App is not running")
+
+        base_url = f"http://localhost:{port}"
+        data = await ui_renderer.fetch_resource_detail(base_url, resource, item_id)
+
+        if data is None:
+            raise HTTPException(status_code=404, detail=f"{resource}/{item_id} not found")
+
+        html = ui_renderer.render_detail_html(data, resource)
+        return {"resource": resource, "item_id": item_id, "data": data, "html": html}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch UI detail {resource}/{item_id} for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Process Management Endpoints (macOS compatible)
 
 @app.post("/api/apps/{app_id}/process/start")

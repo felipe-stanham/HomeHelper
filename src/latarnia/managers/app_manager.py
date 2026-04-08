@@ -435,6 +435,7 @@ class AppManager:
                                 applied_migrations=result.applied_migrations,
                                 last_migration_at=datetime.now() if result.applied_migrations else None,
                             )
+
                         else:
                             self.logger.warning(
                                 f"App {manifest.name} requires database but no provisioner configured"

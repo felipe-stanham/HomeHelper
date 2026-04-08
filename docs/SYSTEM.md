@@ -37,7 +37,24 @@ Latarnia is a unified home automation platform for Raspberry Pi 5 (8GB RAM) that
 6. Log the deployment in `DEPLOYMENTS.md`
 
 ### Targets
-| Target      | Environments | Description                        |
-|-------------|--------------|------------------------------------|
-| local       | dev          | Developer workstation (macOS)      |
-| homeserver  | dev, tst, prd| Raspberry Pi 5 — self-hosted multi-environment |
+| Target      | Environments | Host             | Description                        |
+|-------------|--------------|------------------|------------------------------------|
+| local       | dev          | localhost        | Developer workstation (macOS)      |
+| homeserver  | tst, prd     | 192.168.68.100   | Raspberry Pi 5 (8GB) — self-hosted multi-environment |
+
+### Environment Isolation (homeserver)
+
+Single Raspberry Pi runs both TST and PRD side-by-side, isolated by:
+
+| Resource         | TST                        | PRD                        |
+|------------------|----------------------------|----------------------------|
+| Deploy path      | `/opt/latarnia/tst`        | `/opt/latarnia/prd`        |
+| Git branch       | `tst`                      | `main`                     |
+| Main app port    | 8000                       | 8080                       |
+| Service app ports| 8100-8149                  | 8150-8199                  |
+| Streamlit port   | 8501                       | 8551                       |
+| DB prefix        | `tst_latarnia_`            | `prd_latarnia_`            |
+| Redis DB         | 0                          | 1                          |
+| Logs             | `/opt/latarnia/tst/logs`   | `/opt/latarnia/prd/logs`   |
+| Data             | `/opt/latarnia/tst/data`   | `/opt/latarnia/prd/data`   |
+| Update method    | `git pull` on tst branch   | `git pull` on main branch  |
