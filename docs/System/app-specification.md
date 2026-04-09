@@ -974,14 +974,16 @@ async def call_tool(name: str, arguments: dict):
 # Create SSE transport
 sse = SseServerTransport("/messages/")
 
-def handle_sse(scope, receive, send):
-    async def _run():
-        async with sse.connect_sse(scope, receive, send) as streams:
-            await server.run(streams[0], streams[1], server.create_initialization_options())
-    return _run()
+async def handle_sse(scope, receive, send):
+    async with sse.connect_sse(scope, receive, send) as streams:
+        await server.run(streams[0], streams[1], server.create_initialization_options())
+
+# Bypass Starlette's request-response wrapping by setting .app directly
+sse_route = Route("/sse", endpoint=lambda _: None)
+sse_route.app = handle_sse
 
 routes = [
-    Route("/sse", endpoint=handle_sse),
+    sse_route,
     Mount("/messages/", app=sse.handle_post_message),
 ]
 
