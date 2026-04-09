@@ -26,6 +26,26 @@ Latarnia is a unified home automation platform for Raspberry Pi 5 (8GB RAM) that
 | P-0001  | Latarnia Core | [DONE]      | Full platform: core infra, app/service/UI management, dashboard, deployment |
 | P-0002  | Latarnia        | [DONE]      | Platform rename + evolved manifests, Postgres, MCP gateway, Redis Streams, web UI proxy |
 
+## Testing Tools
+
+| Tool        | Config location  | Purpose                                                |
+|-------------|------------------|--------------------------------------------------------|
+| pytest      | `tests/unit/`    | Unit tests with mocks — run via `python3 -m pytest tests/ -v --tb=short --no-cov` |
+| Playwright MCP | `.mcp.json`  | Browser-level testing for dashboards and web UIs — available as `playwright` MCP server |
+| latarnia-tst MCP | `.mcp.json` | SSE connection to TST environment — interact with deployed app tools |
+
+MCP servers are configured in `.mcp.json` at the project root.
+
+### Integration Test Fixtures
+
+`example_full_app` and `example_companion` (in `examples/`) are the integration test fixtures for the platform. They exercise every platform feature: Postgres DB with migrations, MCP server with tools, Redis Streams pub/sub, web UI proxy, and app dependencies. Any change to a platform feature must be accompanied by a corresponding update to `example_full_app` that exercises that feature.
+
+To run integration tests locally, copy examples to `apps/`:
+```
+cp -r examples/example_full_app apps/
+cp -r examples/example_companion apps/
+```
+
 ## Deployment
 
 ### Procedure
