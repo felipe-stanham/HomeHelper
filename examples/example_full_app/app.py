@@ -600,20 +600,21 @@ async def call_tool(name: str, arguments: dict):
 def _build_mcp_app() -> Starlette:
     sse_transport = SseServerTransport("/messages/")
 
-    def handle_sse(scope, receive, send):
-        async def _run():
-            async with sse_transport.connect_sse(
-                scope, receive, send
-            ) as streams:
-                await mcp_server.run(
-                    streams[0], streams[1],
-                    mcp_server.create_initialization_options(),
-                )
-        return _run()
+    async def handle_sse(scope, receive, send):
+        async with sse_transport.connect_sse(
+            scope, receive, send
+        ) as streams:
+            await mcp_server.run(
+                streams[0], streams[1],
+                mcp_server.create_initialization_options(),
+            )
+
+    sse_route = Route("/sse", endpoint=lambda _: None)
+    sse_route.app = handle_sse
 
     return Starlette(
         routes=[
-            Route("/sse", endpoint=handle_sse),
+            sse_route,
             Mount("/messages/", app=sse_transport.handle_post_message),
         ]
     )
