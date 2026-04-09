@@ -138,6 +138,14 @@ Critical-path tests for Latarnia. Each test is declarative — Claude Code gener
 
 - **test_proxy_bare_app_redirect:** Mock a running app `crm` with `has_web_ui=True`. Send GET to `/apps/crm` (no trailing slash). -> Response status 307 with `Location: /apps/crm/`.
 
+## MCP SSE Transport (Integration)
+
+- **test_mcp_sse_endpoint_connects:** Build the MCP Starlette app from `examples/mcp_server_example.py` via `_build_mcp_app()`. Start it with `uvicorn.Server` on a random available port in a background thread. Send GET to `http://127.0.0.1:{port}/sse` with a 3-second timeout. -> Response status 200. First line of body starts with `event: endpoint`. Stop the server.
+
+- **test_mcp_sse_session_no_errors:** Build the MCP Starlette app from `examples/mcp_server_example.py`. Start it on a random port. Use `mcp.client.sse.sse_client` to connect to `http://127.0.0.1:{port}/sse`, create a `ClientSession`, call `initialize()`, then `list_tools()`. -> Returns a list containing tools named `get_time` and `echo`. Disconnect the client. Check that uvicorn logged no `TypeError` or `500 Internal Server Error` during the session. Stop the server.
+
+- **test_mcp_gateway_sse_endpoint_connects:** Import `MCPGateway` and create an instance with a mocked `app_manager` (no apps). Call `await gateway.initialize()`. Start the gateway's `_asgi_app` with `uvicorn.Server` on a random port in a background thread. Send GET to `http://127.0.0.1:{port}/sse` with a 3-second timeout. -> Response status 200. First line of body starts with `event: endpoint`. Stop the server.
+
 ## Dashboard Updates
 
 - **test_dashboard_capability_badges_mcp:** Call `buildCapabilityBadges` (JS function) with app data containing `mcp_info: {enabled: true, healthy: true, registered_tools: ["search", "add"]}`. -> Returns HTML string containing `"MCP: 2 tools"` and `"bg-info"`.
@@ -151,3 +159,41 @@ Critical-path tests for Latarnia. Each test is declarative — Claude Code gener
 - **test_dashboard_web_ui_button:** Render a service app card with `manifest.config.has_web_ui=true` and `name="crm"`. -> Card HTML contains `<a` tag with `href="/apps/crm/"` and text `"Web UI"`.
 
 - **test_dashboard_error_unmet_deps:** Call `buildErrorAlerts` with app data containing `dependencies: [{app: "kb", satisfied: false}]`. -> Returns HTML containing `"Unmet deps: kb"`.
+
+## Integration Tests — Full Stack (Playwright MCP)
+
+These tests require the Playwright MCP server and a running local dev instance of Latarnia with the example apps installed in `apps/`. The `example_full_app` and `example_companion` apps serve as the integration test fixtures for the platform — they exercise every platform feature (DB, MCP, Redis Streams, web UI proxy, dependencies).
+
+**Prerequisite:** Copy `examples/example_full_app` and `examples/example_companion` to `apps/` before running. Start Latarnia dev server on localhost:8000. Start the example_full_app via the API (`POST /api/apps/example-full-app/process/start`).
+
+### Dashboard
+
+- **test_dashboard_page_loads:** Use Playwright to navigate to `http://localhost:8000/dashboard`. -> Page title contains "Latarnia". Page contains an element with text "System Health". No JavaScript console errors.
+
+- **test_dashboard_shows_app_cards:** Navigate to `http://localhost:8000/dashboard`. -> Page contains app cards for both `example_full_app` and `example_companion`. Each card displays the app name and status.
+
+- **test_dashboard_health_badge:** Navigate to `http://localhost:8000/dashboard`. -> Health status badge is visible and shows either "good", "warning", or "error".
+
+- **test_dashboard_capability_badges_render:** Navigate to `http://localhost:8000/dashboard`. -> The `example_full_app` card shows capability badges for MCP (with tool count), DB (with migration count), and Streams (with pub/sub counts).
+
+- **test_app_web_ui_opens_in_modal:** Navigate to `http://localhost:8000/dashboard`. Click the "Web UI" button on the `example_full_app` card. -> A modal/iframe opens displaying the app's web UI with the "Example Full App" heading.
+
+### App Web UI
+
+- **test_example_app_web_ui_loads:** Use Playwright to navigate to `http://localhost:8100/`. -> Page contains heading "Example Full App". Page contains "Add Item" form with name and description inputs. Items table is visible.
+
+- **test_example_app_add_item_via_ui:** Navigate to `http://localhost:8100/`. Fill in the "Item name" input with "playwright-test-item" and description with "added by test". Click the "Add" button. -> Items table updates to include a row with "playwright-test-item".
+
+### MCP via Platform Gateway
+
+- **test_mcp_gateway_lists_example_tools:** After example_full_app is started, send GET to `http://localhost:8000/api/apps`. -> The `example_full_app` entry has `mcp_info.healthy == true` and `mcp_info.registered_tools` contains `["list_items", "add_item", "get_status"]`.
+
+- **test_mcp_gateway_proxies_tool_call:** Connect an MCP client to `http://localhost:8000/mcp/sse`. Call `list_tools()`. -> Result includes tools prefixed with `example_full_app.` (e.g., `example_full_app.list_items`, `example_full_app.add_item`, `example_full_app.get_status`). Call `example_full_app.get_status` with no arguments. -> Returns JSON with `health == "good"` and `db_connected == true`.
+
+### Redis Streams
+
+- **test_item_creation_publishes_event:** Add an item via `POST http://localhost:8100/api/items?name=stream-test`. -> Response 200 with item data. Check Redis stream `latarnia:streams:example.events.created` (via `redis-cli XRANGE latarnia:streams:example.events.created - + COUNT 1`). -> Last entry contains `source == "example_full_app"` and data contains `"item_created"`.
+
+### Database
+
+- **test_example_app_db_provisioned:** Query the API `GET http://localhost:8000/api/apps`. -> The `example_full_app` entry has `database_info.provisioned == true` and `database_info.applied_migrations` contains `["001_initial.sql", "002_add_tags.sql", "003_add_status.sql"]`.
