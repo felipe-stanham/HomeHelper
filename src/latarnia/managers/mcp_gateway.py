@@ -72,15 +72,17 @@ class MCPGateway:
         # Build SSE transport and Starlette app
         sse_transport = SseServerTransport("/messages/")
 
-        async def handle_sse(scope, receive, send):
-            async with sse_transport.connect_sse(
-                scope, receive, send
-            ) as streams:
-                await self._mcp_server.run(
-                    streams[0],
-                    streams[1],
-                    self._mcp_server.create_initialization_options(),
-                )
+        def handle_sse(scope, receive, send):
+            async def _run():
+                async with sse_transport.connect_sse(
+                    scope, receive, send
+                ) as streams:
+                    await self._mcp_server.run(
+                        streams[0],
+                        streams[1],
+                        self._mcp_server.create_initialization_options(),
+                    )
+            return _run()
 
         asgi_app = Starlette(
             routes=[
