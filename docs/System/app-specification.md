@@ -974,9 +974,11 @@ async def call_tool(name: str, arguments: dict):
 # Create SSE transport
 sse = SseServerTransport("/messages/")
 
-async def handle_sse(scope, receive, send):
-    async with sse.connect_sse(scope, receive, send) as streams:
-        await server.run(streams[0], streams[1], server.create_initialization_options())
+def handle_sse(scope, receive, send):
+    async def _run():
+        async with sse.connect_sse(scope, receive, send) as streams:
+            await server.run(streams[0], streams[1], server.create_initialization_options())
+    return _run()
 
 routes = [
     Route("/sse", endpoint=handle_sse),
