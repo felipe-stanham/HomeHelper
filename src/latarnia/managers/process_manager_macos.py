@@ -8,6 +8,7 @@ import logging
 import os
 import subprocess
 import signal
+import sys
 import psutil
 from pathlib import Path
 from typing import Optional, Dict
@@ -61,7 +62,7 @@ class MacOSProcessManager:
                 return False
             
             # Build arguments
-            cmd = ["python3", str(main_file), "--port", str(port)]
+            cmd = [sys.executable, str(main_file), "--port", str(port)]
             
             # Add Redis URL if required
             if app.manifest.config.redis_required:
