@@ -29,9 +29,23 @@
     {% block extra_head %}{% endblock %}
   </head>
   <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-3">
+    {% set env = env|default("prd") %}
+    {% if env == "dev" %}
+      {% set nav_bg = "bg-warning" %}
+      {% set nav_text = "navbar-dark" %}
+      {% set env_label = "DEV" %}
+    {% elif env == "tst" %}
+      {% set nav_bg = "bg-info" %}
+      {% set nav_text = "navbar-dark" %}
+      {% set env_label = "TST" %}
+    {% else %}
+      {% set nav_bg = "bg-primary" %}
+      {% set nav_text = "navbar-dark" %}
+      {% set env_label = "" %}
+    {% endif %}
+    <nav class="navbar navbar-expand-lg {{ nav_text }} {{ nav_bg }} mb-3">
       <div class="container-fluid">
-        <a class="navbar-brand" href="#">Latarnia</a>
+        <a class="navbar-brand" href="#">Latarnia{% if env_label %} <span class="badge bg-dark ms-2">{{ env_label }}</span>{% endif %}</a>
       </div>
     </nav>
 
