@@ -96,9 +96,9 @@ def _build_mcp_app() -> Starlette:
     """Build the Starlette ASGI app that serves MCP over SSE."""
     sse_transport = SseServerTransport("/messages/")
 
-    async def handle_sse(request):
+    async def handle_sse(scope, receive, send):
         async with sse_transport.connect_sse(
-            request.scope, request.receive, request._send
+            scope, receive, send
         ) as streams:
             await mcp_server.run(
                 streams[0],

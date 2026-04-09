@@ -27,7 +27,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import redis
+try:
+    import redis
+except ImportError:
+    redis = None
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
@@ -526,9 +529,9 @@ async def call_tool(name: str, arguments: dict):
 def _build_mcp_app() -> Starlette:
     sse_transport = SseServerTransport("/messages/")
 
-    async def handle_sse(request):
+    async def handle_sse(scope, receive, send):
         async with sse_transport.connect_sse(
-            request.scope, request.receive, request._send
+            scope, receive, send
         ) as streams:
             await mcp_server.run(
                 streams[0], streams[1],
