@@ -40,6 +40,8 @@ MCP servers are configured in `.mcp.json` at the project root.
 
 `example_full_app` and `example_companion` (in `examples/`) are the integration test fixtures for the platform. They exercise every platform feature: Postgres DB with migrations, MCP server with tools, Redis Streams pub/sub, web UI proxy, and app dependencies. Any change to a platform feature must be accompanied by a corresponding update to `example_full_app` that exercises that feature.
 
+> **Source of truth:** `examples/` is committed to git. `apps/` is gitignored and populated from `examples/` during deployment. All changes to example apps must be made in `examples/`, never in `apps/`.
+
 To run integration tests locally, copy examples to `apps/`:
 ```
 cp -r examples/example_full_app apps/
@@ -50,11 +52,17 @@ cp -r examples/example_companion apps/
 
 ### Procedure
 1. Run regression tests (`TESTS.md`) — all must pass
-2. Build the project for the target environment
-3. Read `.deploy-secrets` for the target
-4. SSH to the target and deploy
-5. Run smoke tests against the deployed instance
-6. Log the deployment in `DEPLOYMENTS.md`
+2. Read `.deploy-secrets` for the target
+3. SSH to the target, `git pull` the correct branch
+4. **DEV/TST only:** Copy example apps to `apps/`:
+   ```
+   cp -r examples/example_full_app apps/
+   cp -r examples/example_companion apps/
+   ```
+   PRD does **not** deploy example apps — only real apps live in PRD `apps/`.
+5. Restart the service
+6. Run smoke tests against the deployed instance
+7. Log the deployment in `DEPLOYMENTS.md`
 
 ### Targets
 | Target      | Environments | Description                        |
