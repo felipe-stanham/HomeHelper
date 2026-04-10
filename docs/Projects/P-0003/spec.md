@@ -22,23 +22,21 @@ Extend the `PortManager` to allocate MCP ports from a dedicated range, and have 
 
 ### Capabilities
 
-- **cap-001: Remove `mcp_port` from manifest schema.** The `latarnia.json` `config.mcp_port` field becomes unnecessary. Apps declare `"mcp_server": true` to signal MCP capability; the platform assigns the port.
+- **cap-001: Remove `mcp_port` from manifest schema.** Delete `config.mcp_port` from `AppConfig`. Apps declare `"mcp_server": true` to signal MCP capability; the platform assigns the port.
 - **cap-002: Add MCP port range to configuration.** Add a configurable `mcp_port_range` (start/end) alongside the existing `port_range` in `ProcessManagerConfig`.
 - **cap-003: Allocate MCP ports dynamically.** Extend `PortManager` to handle a second port allocation for MCP-enabled apps. Track both REST and MCP ports per app.
 - **cap-004: Pass MCP port to apps at launch.** `ProcessManager` adds `--mcp-port <allocated_port>` to the subprocess command for MCP-enabled apps. `ServiceManager` includes the MCP port in systemd templates.
 - **cap-005: Update MCPGateway to use allocated port.** The gateway reads the MCP port from `MCPInfo` (which is now populated by the platform at launch, not from the manifest).
 - **cap-006: Update example_full_app to reflect the change.** Remove `mcp_port` from `latarnia.json`, verify the app already accepts `--mcp-port` via CLI arg (it does).
-- **cap-007: Backward compatibility for `mcp_port` in manifest.** If an app still declares `mcp_port` in its manifest, log a deprecation warning and use the declared port as a hint (but still validate it's available).
 
 ## Acceptance Criteria
 
-- **cap-001:** `AppConfig.mcp_port` field is `Optional[int] = None` and not required. Apps with `mcp_server: true` and no `mcp_port` get a port allocated automatically.
+- **cap-001:** `AppConfig` has no `mcp_port` field. Apps with `mcp_server: true` get a port allocated automatically. Any manifest with `mcp_port` is rejected at validation.
 - **cap-002:** `config.json` has a new `mcp_port_range` block with `start` and `end`. Defaults: `start=9001, end=9099`. TST and PRD ranges are documented in `SYSTEM.md`.
 - **cap-003:** `PortManager.allocate_mcp_port(app_id)` returns a free port from the MCP range. `PortManager` tracks MCP ports separately from REST ports. `get_port_statistics()` includes MCP allocation counts.
-- **cap-004:** When starting an MCP-enabled app, the command includes `--mcp-port <port>`. The allocated MCP port is stored in `MCPInfo.mcp_port` and in `RuntimeInfo`.
+- **cap-004:** When starting an MCP-enabled app, the command includes `--mcp-port <port>`. The allocated MCP port is stored in `MCPInfo.mcp_port`.
 - **cap-005:** `MCPGateway` connects to the dynamically allocated port (no behavior change needed if `MCPInfo.mcp_port` is already populated correctly).
 - **cap-006:** `examples/example_full_app/latarnia.json` has `"mcp_server": true` with no `mcp_port` field. App starts and MCP tools are reachable via the gateway.
-- **cap-007:** If an app declares `mcp_port: 9005`, the platform uses 9005 if available (with a deprecation warning in logs). If 9005 is taken, it allocates from the range and logs a warning.
 
 ## Key Flows
 
@@ -62,23 +60,6 @@ sequenceDiagram
     GW-->>GW: Register tools
 ```
 
-### flow-02: Backward-compatible manifest with explicit mcp_port
-
-```mermaid
-flowchart TD
-    A[Read manifest] --> B{mcp_server == true?}
-    B -->|No| C[Skip MCP]
-    B -->|Yes| D{mcp_port declared?}
-    D -->|No| E[Allocate from MCP range]
-    D -->|Yes| F[Log deprecation warning]
-    F --> G{Declared port available?}
-    G -->|Yes| H[Use declared port]
-    G -->|No| I[Allocate from range + warn]
-    E --> J[Pass --mcp-port to app]
-    H --> J
-    I --> J
-```
-
 ## Technical Considerations
 - The `PortManager` currently uses a flat `app_ports: Dict[str, int]` mapping. It needs a parallel `app_mcp_ports: Dict[str, int]` mapping or a richer data structure.
 - The `PortAllocation` dataclass needs an `allocation_type` field (rest vs mcp) or we need a second allocation dict.
@@ -89,8 +70,6 @@ flowchart TD
 - **Rabbit hole:** Do NOT redesign the entire port management system. Keep the existing approach (two parallel ranges) rather than introducing a unified port pool.
 - **Rabbit hole:** Do NOT add MCP port to the REST API response for apps (it's an internal detail). The gateway is the only consumer.
 - **Open question:** Should the MCP port range be separate from the REST port range? (Proposed: yes, to maintain clear separation and avoid confusion in logs/monitoring.)
-- **Risk:** Apps that hardcode `mcp_port` in their own code (not reading from `--mcp-port` arg) will break. The example_full_app already reads from `--mcp-port`, so this is fine for our apps.
-
 ## Scope: IN vs OUT
-- **IN:** Dynamic MCP port allocation, config, port manager extension, process/service manager updates, example app update, backward compat for `mcp_port` in manifest
-- **OUT:** Unified port pool (keep separate ranges), MCP port in REST API response, changes to non-MCP port allocation logic, MCP transport changes (SSE stays as-is)
+- **IN:** Dynamic MCP port allocation, config, port manager extension, process/service manager updates, example app update, remove `mcp_port` from manifest schema
+- **OUT:** Unified port pool (keep separate ranges), MCP port in REST API response, changes to non-MCP port allocation logic, MCP transport changes (SSE stays as-is), backward compatibility for old `mcp_port` manifests
