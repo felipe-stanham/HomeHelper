@@ -30,12 +30,18 @@ class PortRange(BaseModel):
     end: int = 8199
 
 
+class MCPPortRange(BaseModel):
+    start: int = 9001
+    end: int = 9099
+
+
 class ProcessManagerConfig(BaseModel):
     data_dir: str = "/opt/latarnia/data"
     logs_dir: str = "/opt/latarnia/logs"
     streamlit_port: int = 8501
     streamlit_ttl_seconds: int = 300
     port_range: PortRange = Field(default_factory=PortRange)
+    mcp_port_range: MCPPortRange = Field(default_factory=MCPPortRange)
 
 
 class PostgresConfig(BaseModel):

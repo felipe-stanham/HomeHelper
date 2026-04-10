@@ -28,6 +28,10 @@
     "port_range": {
       "start": 8100,
       "end": 8199
+    },
+    "mcp_port_range": {
+      "start": 9001,
+      "end": 9099
     }
   },
   "health_check_interval_seconds": 60,

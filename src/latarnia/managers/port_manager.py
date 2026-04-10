@@ -21,7 +21,7 @@ class PortAllocation:
     """Port allocation information"""
     port: int
     app_id: str
-    app_type: str  # 'service' or 'streamlit'
+    app_type: str  # 'service', 'streamlit', or 'mcp'
     allocated_at: datetime
     status: str  # 'allocated', 'in_use', 'released'
     
@@ -44,17 +44,28 @@ class PortManager:
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
         self.logger = logging.getLogger("latarnia.port_manager")
-        
+
         # Get port range from config
         config = config_manager.config
         self.port_start = config.process_manager.port_range.start
         self.port_end = config.process_manager.port_range.end
-        
+
+        # MCP port range from config
+        self.mcp_port_start = config.process_manager.mcp_port_range.start
+        self.mcp_port_end = config.process_manager.mcp_port_range.end
+
         # Port allocation tracking (in-memory only)
         self.allocations: Dict[int, PortAllocation] = {}
         self.app_ports: Dict[str, int] = {}  # app_id -> port mapping
-        
-        self.logger.info(f"Initialized port manager (range: {self.port_start}-{self.port_end})")
+
+        # MCP port allocation tracking (separate from REST ports)
+        self.mcp_allocations: Dict[int, PortAllocation] = {}
+        self.app_mcp_ports: Dict[str, int] = {}  # app_id -> mcp port mapping
+
+        self.logger.info(
+            f"Initialized port manager (REST range: {self.port_start}-{self.port_end}, "
+            f"MCP range: {self.mcp_port_start}-{self.mcp_port_end})"
+        )
     
     def _is_port_available(self, port: int) -> bool:
         """Check if a port is available for binding"""
@@ -146,6 +157,81 @@ class PortManager:
         self.logger.info(f"Released port {port} from app {app_id}")
         return True
     
+    def allocate_mcp_port(self, app_id: str) -> Optional[int]:
+        """
+        Allocate an MCP port for an application
+
+        Args:
+            app_id: Unique application identifier
+
+        Returns:
+            Allocated MCP port number or None if no ports available
+        """
+        # Check if app already has an MCP port allocated
+        if app_id in self.app_mcp_ports:
+            existing_port = self.app_mcp_ports[app_id]
+            allocation = self.mcp_allocations[existing_port]
+
+            if self._is_port_available(existing_port):
+                allocation.status = 'allocated'
+                allocation.allocated_at = datetime.now()
+                self.logger.info(f"Reusing existing MCP port {existing_port} for app {app_id}")
+                return existing_port
+            else:
+                self.release_mcp_port(app_id)
+
+        # Find next available MCP port in range
+        for port in range(self.mcp_port_start, self.mcp_port_end + 1):
+            if port not in self.mcp_allocations and self._is_port_available(port):
+                return self._allocate_specific_mcp_port(app_id, port)
+
+        self.logger.error(f"No available MCP ports in range {self.mcp_port_start}-{self.mcp_port_end}")
+        return None
+
+    def _allocate_specific_mcp_port(self, app_id: str, port: int) -> int:
+        """Allocate a specific MCP port to an application"""
+        allocation = PortAllocation(
+            port=port,
+            app_id=app_id,
+            app_type='mcp',
+            allocated_at=datetime.now(),
+            status='allocated'
+        )
+
+        self.mcp_allocations[port] = allocation
+        self.app_mcp_ports[app_id] = port
+
+        self.logger.info(f"Allocated MCP port {port} to app {app_id}")
+        return port
+
+    def release_mcp_port(self, app_id: str) -> bool:
+        """
+        Release an MCP port allocated to an application
+
+        Args:
+            app_id: Application identifier
+
+        Returns:
+            True if port was released, False if not found
+        """
+        if app_id not in self.app_mcp_ports:
+            self.logger.warning(f"No MCP port allocated to app {app_id}")
+            return False
+
+        port = self.app_mcp_ports[app_id]
+        allocation = self.mcp_allocations[port]
+        allocation.status = 'released'
+
+        del self.app_mcp_ports[app_id]
+        del self.mcp_allocations[port]
+
+        self.logger.info(f"Released MCP port {port} from app {app_id}")
+        return True
+
+    def get_app_mcp_port(self, app_id: str) -> Optional[int]:
+        """Get the MCP port allocated to an application"""
+        return self.app_mcp_ports.get(app_id)
+
     def get_app_port(self, app_id: str) -> Optional[int]:
         """Get the port allocated to an application"""
         return self.app_ports.get(app_id)
@@ -209,14 +295,17 @@ class PortManager:
         total_ports = self.port_end - self.port_start + 1
         allocated_ports = len(self.allocations)
         available_ports = len(self.get_available_ports())
-        
+
+        total_mcp_ports = self.mcp_port_end - self.mcp_port_start + 1
+        allocated_mcp_ports = len(self.mcp_allocations)
+
         status_counts = {}
         app_type_counts = {}
-        
+
         for allocation in self.allocations.values():
             status_counts[allocation.status] = status_counts.get(allocation.status, 0) + 1
             app_type_counts[allocation.app_type] = app_type_counts.get(allocation.app_type, 0) + 1
-        
+
         return {
             'total_ports': total_ports,
             'allocated_ports': allocated_ports,
@@ -224,5 +313,9 @@ class PortManager:
             'port_range': f"{self.port_start}-{self.port_end}",
             'status_breakdown': status_counts,
             'app_type_breakdown': app_type_counts,
-            'utilization_percent': round((allocated_ports / total_ports) * 100, 1)
+            'utilization_percent': round((allocated_ports / total_ports) * 100, 1),
+            'mcp_total_ports': total_mcp_ports,
+            'mcp_allocated_ports': allocated_mcp_ports,
+            'mcp_port_range': f"{self.mcp_port_start}-{self.mcp_port_end}",
+            'mcp_utilization_percent': round((allocated_mcp_ports / total_mcp_ports) * 100, 1)
         }
