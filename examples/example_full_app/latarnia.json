@@ -1,7 +1,7 @@
 {
   "name": "example_full_app",
   "type": "service",
-  "description": "Full-featured example app demonstrating all Latarnia P-0002 capabilities",
+  "description": "Full-featured example app demonstrating all Latarnia capabilities",
   "version": "1.0.0",
   "author": "Latarnia",
   "main_file": "app.py",

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -23,7 +24,9 @@ async def dashboard(request: Request):
     (e.g. /health and /api/apps). This keeps the server-side view
     simple and aligned with the manual-refresh pattern.
     """
+    env = os.environ.get("ENV", "dev").lower()
     return templates.TemplateResponse(
         request,
         "dashboard.html",
+        context={"env": env},
     )

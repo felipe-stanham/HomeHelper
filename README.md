@@ -43,7 +43,10 @@ The system follows a modular architecture with these core components:
 │   │   ├── logging.py          # Shared logging utilities
 │   │   └── system_monitor.py   # System monitoring
 │   └── main.py                 # FastAPI application
-├── apps/                       # Discovered applications
+├── apps/                       # Deployed applications (gitignored, populated from examples/)
+├── examples/                   # Source of truth for example apps (committed)
+│   ├── example_full_app/       # Full-featured demo exercising all platform features
+│   └── example_companion/      # Minimal companion app (dependency target)
 ├── data/                       # Shared data directory (per-app subdirs)
 ├── logs/                       # Shared logs directory (per-app subdirs)
 ├── docs/                       # Documentation
@@ -171,7 +174,9 @@ This project follows the ShapeUp methodology. See `Projects/P-001.md` for detail
 
 ## App Development
 
-Apps are discovered automatically from the `apps/` directory. Each app must include a `latarnia.json` manifest file. See `docs/app-specification.md` for detailed requirements.
+Apps are discovered automatically from the `apps/` directory. Each app must include a `latarnia.json` manifest file. See `docs/System/app-specification.md` for detailed requirements.
+
+> **Important:** The `apps/` directory is gitignored. Example apps live in `examples/` (committed) and are copied to `apps/` during deployment. All changes to example apps must be made in `examples/`, never in `apps/`.
 
 ### Service App Example
 ```json
