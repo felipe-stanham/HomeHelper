@@ -10,7 +10,7 @@ This specification defines the requirements for apps that integrate with the Lat
 - **Lifecycle**: Managed by systemd, controlled by main app
 - **Port Assignment**: Dynamically assigned by main app via `--port` parameter
 - **Requirements**: Must implement required API endpoints
-- **Startup Command**: `python app.py --port {assigned_port}`
+- **Startup Command**: `python app.py --port {assigned_port} [--mcp-port {mcp_port}]`
 
 ### Streamlit Apps
 - **Lifecycle**: Started on-demand when user opens UI, single instance only
@@ -43,7 +43,6 @@ Each app must include a `latarnia.json` file in its root directory:
     "redis_required": true,
     "database": true,
     "mcp_server": true,
-    "mcp_port": 9001,
     "logs_dir": true,
     "data_dir": true,
     "auto_start": true,
@@ -78,8 +77,7 @@ Each app must include a `latarnia.json` file in its root directory:
 - **config.has_web_ui**: Boolean, if app serves its own web UI via HTTP on its assigned port (default: false). When true, the platform can reverse-proxy requests under `/apps/{app_name}/`.
 - **config.redis_required**: Boolean, if app needs Redis (default: false)
 - **config.database**: Boolean, if app needs a dedicated Postgres database (default: false). When true, the platform provisions an isolated database and passes `--db-url` at launch.
-- **config.mcp_server**: Boolean, if app exposes an MCP server (default: false). The app must implement the MCP protocol on its declared `mcp_port`.
-- **config.mcp_port**: Integer, the port the app's MCP server listens on (default: null). Required when `mcp_server: true`.
+- **config.mcp_server**: Boolean, if app exposes an MCP server (default: false). The platform dynamically allocates an MCP port and passes it via `--mcp-port` at launch. The app must accept this CLI argument and start its MCP server on the given port.
 - **config.logs_dir**: Boolean, if app receives the logs_dir argument (default: false)
 - **config.data_dir**: Boolean, if app receives the data_dir argument (default: false)
 - **config.auto_start**: Boolean, start on main app startup (default: false)
@@ -902,7 +900,7 @@ Service apps can optionally expose an **MCP (Model Context Protocol) server** to
 
 ### Manifest Declaration
 
-To enable MCP, add the following fields to the `config` section of your `latarnia.json` manifest:
+To enable MCP, set `mcp_server` to `true` in the `config` section of your `latarnia.json` manifest:
 
 ```json
 {
@@ -910,23 +908,24 @@ To enable MCP, add the following fields to the `config` section of your `latarni
   "version": "1.0.0",
   "type": "service",
   "config": {
-    "mcp_server": true,
-    "mcp_port": 9001
+    "mcp_server": true
   }
 }
 ```
 
 - **`mcp_server`** (bool): Set to `true` to declare that this app runs an MCP server.
-- **`mcp_port`** (int): The port on which the MCP server listens. Must be different from the app's REST port.
+- The platform dynamically allocates an MCP port from the configured range (default 9001–9099) and passes it to the app via `--mcp-port` at launch.
+- **Do not** declare `mcp_port` in the manifest — manifests containing `mcp_port` are rejected at validation.
 
 ### Protocol Requirements
 
 Apps that declare `mcp_server: true` must:
 
-1. **Run an HTTP-based MCP server** on the declared `mcp_port`. The server must use HTTP transport (`sse` or `streamable-http`). **stdio transport is not supported** by the platform.
-2. **Respond to MCP `tools/list`** — return a list of tools the app provides, following the MCP protocol specification.
-3. **Respond to MCP `tools/call`** — execute a tool invocation and return the result, following the MCP protocol specification.
-4. **Be ready to receive MCP requests after `/health` returns `good`** — the platform health monitor will probe the MCP port only after the standard `/health` check passes.
+1. **Accept `--mcp-port` CLI argument** — the platform passes the dynamically allocated MCP port at launch. The app must start its MCP server on this port.
+2. **Run an HTTP-based MCP server** on the allocated port. The server must use HTTP transport (`sse` or `streamable-http`). **stdio transport is not supported** by the platform.
+3. **Respond to MCP `tools/list`** — return a list of tools the app provides, following the MCP protocol specification.
+4. **Respond to MCP `tools/call`** — execute a tool invocation and return the result, following the MCP protocol specification.
+5. **Be ready to receive MCP requests after `/health` returns `good`** — the platform health monitor will probe the MCP port only after the standard `/health` check passes.
 
 ### Platform Health Probe
 

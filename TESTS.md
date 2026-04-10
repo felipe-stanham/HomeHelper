@@ -208,6 +208,8 @@ These tests require the Playwright MCP server and a running local dev instance o
 
 ### MCP via Platform Gateway
 
+- **test_mcp_dynamic_port_allocation:** After example_full_app is started, send GET to `http://localhost:8000/api/apps`. -> The `example_full_app` entry has `mcp_info.enabled == true` and `mcp_info.mcp_port` is an integer in range 9001-9099 (dynamically allocated, not hardcoded).
+
 - **test_mcp_gateway_lists_example_tools:** After example_full_app is started, send GET to `http://localhost:8000/api/apps`. -> The `example_full_app` entry has `mcp_info.healthy == true` and `mcp_info.registered_tools` contains `["list_items", "add_item", "get_status"]`.
 
 - **test_mcp_gateway_proxies_tool_call:** Connect an MCP client to `http://localhost:8000/mcp/sse`. Call `list_tools()`. -> Result includes tools prefixed with `example_full_app.` (e.g., `example_full_app.list_items`, `example_full_app.add_item`, `example_full_app.get_status`). Call `example_full_app.get_status` with no arguments. -> Returns JSON with `health == "good"` and `db_connected == true`.
