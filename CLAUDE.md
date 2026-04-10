@@ -21,6 +21,15 @@
 - When a project's final scope is marked `[DONE]`, update the project's entry in `docs/SYSTEM.md` to reflect its completed status.
 - If creating a new SYSTEM.md, use template at `docs/templates/SYSTEM.template.md`.
 
+## Git Ignore
+
+Every project must have a `.gitignore` that excludes at minimum:
+- `.env` — contains environment credentials
+- `.deploy-secrets` — contains deployment credentials
+- Verify these are present before the first commit. If `.gitignore` does not exist, create one.
+
+---
+
 ## General
 
 - Plans are produced externally and arrive as `docs/Projects/P-xxxx.md`. Do not modify the plan — if something in it is wrong or unclear, stop and ask.
@@ -32,9 +41,30 @@
 
 ## Memory
 
-- `MEMORY.md` is the ONLY mechanism for persistent learnings. Entries must be self-contained plain text — no links to external files or ~/.claude paths.
-- Auto memory (Claude Code's built-in system) is disabled for this project.
-- Never solve the same problem twice — if you're re-discovering something, it belongs in `MEMORY.md`.
+- `MEMORY.md` is the index for persistent learnings. Auto memory (Claude Code's built-in system) is disabled for this project.
+- Never solve the same problem twice — if you're re-discovering something, it belongs in memory.
+
+### Structure
+
+- `MEMORY.md` — lightweight index. Each entry is a one-line description. Simple learnings (one or two sentences) live inline here.
+- `memory/` — detailed memory files. When an entry needs more context, explanation, or examples, create a file in `memory/` and link it from the index.
+
+### Format
+
+```
+## Index
+
+- **env-pip-flag:** pip on this system requires `--break-system-packages` flag.
+- **api-auth-retry:** Auth token refresh logic and retry pattern. → [memory/api-auth-retry.md](memory/api-auth-retry.md)
+- **deploy-homeserver-quirks:** SSH and restart sequence for homeserver. → [memory/deploy-homeserver-quirks.md](memory/deploy-homeserver-quirks.md)
+```
+
+### Rules
+
+- At session startup, read `MEMORY.md` (the index only). Load individual memory files only when relevant to the current task.
+- Keep the index scannable — one line per entry, no paragraphs.
+- If a learning applies only to a specific project and is already captured in that project's docs, do not duplicate it in memory.
+- Entries must be self-contained plain text — no links to external files or ~/.claude paths.
 
 ---
 
@@ -100,15 +130,15 @@ Every project must support at least two environment configurations: **dev** (loc
 main (production-ready)
  └── tst (testing / staging — deploys to tst targets)
       └── dev (integration — all scope work merges here)
-           ├── scope/P-XXXX-1-<short-description>
-           ├── scope/P-XXXX-2-<short-description>
-           └── scope/P-XXXX-N-<short-description>
+           ├── scope-P-XXXX-1-<short-description>
+           ├── scope-P-XXXX-2-<short-description>
+           └── scope-P-XXXX-N-<short-description>
 ```
 
 - **`main`** — Production-ready code. Only receives merges from `tst` after explicit user approval. Maps to `prd` deployment targets.
 - **`tst`** — Testing/staging branch. Receives merges from `dev` after all regression tests pass. Used to deploy to `tst` targets for validation.
 - **`dev`** — Integration branch for active project work. All scope branches are created from and merged back into `dev`.
-- **`scope/P-XXXX-N-<short-description>`** — One branch per scope, branched from `dev`.
+- **`scope-P-XXXX-N-<short-description>`** — One branch per scope, branched from `dev`.
 
 ### Rules
 
@@ -174,7 +204,7 @@ Do not commit until the review passes. If the reviewer flags issues, fix them an
 
 Tests are defined declaratively in `TESTS.md` and in each scope's acceptance criteria — not as pre-written test scripts. Each entry describes **what to verify** and **what the expected result is**. The `tester` agent handles execution: it generates throwaway verification scripts, runs them, and reports pass/fail.
 
-- `TESTS.md` is the only test artifact that is maintained. There is no `tests/` directory.
+- `TESTS.md` is the only test artifact that is maintained. There is no `tests/` directory. If creating a new `TESTS.md`, use the template at `docs/Templates/TESTS.template.md`.
 - Test descriptions must be specific enough for the `tester` agent to generate verification without guessing. Include concrete inputs and expected outputs.
 - Format: `- **test_name:** [What to do] → [Expected result]`
 
