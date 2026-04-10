@@ -139,16 +139,8 @@ PORT=8080
 - Before any deployment, read `.deploy-secrets` and verify the target exists.
 - **Never deploy to a `prd` target without explicit user confirmation.**
 - Always run regression tests before deploying (see Testing section). Deploy to `tst` targets from the `tst` branch; deploy to `prd` targets from `main` only.
-- **DEV/TST deployments must copy example apps** from `examples/` to `apps/` after `git pull`. PRD does **not** deploy example apps.
-- Log every deployment action: target, environment, timestamp, commit hash.
+- Log every deployment action: target, environment, timestamp, commit hash in `DEPLOYMENTS.md`.
 - If `.deploy-secrets` does not exist or is missing a target, stop and ask the user to provide the credentials.
-
-### Example Apps
-
-- `examples/` is the **source of truth** for example apps (committed to git).
-- `apps/` is gitignored and populated from `examples/` during deployment or local dev setup.
-- **All changes to example apps must be made in `examples/`, never in `apps/`.**
-- When fixing bugs or adding features to example apps, edit `examples/` and re-copy to `apps/`.
 
 ### Deployment Procedure in `docs/SYSTEM.md`
 
