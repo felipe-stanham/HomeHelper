@@ -2,13 +2,15 @@
 
 ## Session Startup
 
-At the start of every session:
-1. Read `MEMORY.md` if it exists — it contains persistent learnings from past sessions.
-2. Read `docs/SYSTEM.md` if it exists — it contains a lightweight description of the current system state and active projects.
+**ALWAYS do this before anything else, regardless of task complexity:**
+1. Read `MEMORY.md` if it exists.
+2. Read `docs/SYSTEM.md` if it exists.
+3. Confirm with one line: "Loaded MEMORY.md ✓ / docs/SYSTEM.md ✓"
 
 ## System Context
 
 - `docs/SYSTEM.md` is the always-loaded system index. It describes the existing system at a high level without requiring all project files to be read.
+- `docs/SYSTEM.md` must stay under ~150 lines. Detail belongs in individual P-xxxx.md files.
 - `docs/SYSTEM.md` contains:
   - A brief description of what the system does and its main components
   - Key architectural decisions that must be respected across all projects
@@ -17,40 +19,7 @@ At the start of every session:
   - Deployment targets and environments (see Deployment section below)
 - Never load individual project files unless the user specifies which project to work on.
 - When a project's final scope is marked `[DONE]`, update the project's entry in `docs/SYSTEM.md` to reflect its completed status.
-- If `docs/SYSTEM.md` does not exist at session start, ask the user whether to create it before proceeding.
-
-The expected `SYSTEM.md` format is:
-
-```
-# System: [System Name]
-
-## What This System Does
-[2–4 sentences describing the system's purpose and main components]
-
-## Architecture Principles
-- [Key decision that must be respected, e.g., "API-first: all features exposed via REST before UI"]
-- [Another constraint, e.g., "Single Postgres database — no secondary datastores"]
-
-## Cross-Project Constraints
-- [Constraint that applies to every project, e.g., "All auth uses JWT via auth-service"]
-
-## Projects
-| ID      | Name            | Status      | Summary                              |
-|---------|-----------------|-------------|--------------------------------------|
-| P-0001  | [Project Name]  | [DONE]      | One-line description                 |
-| P-0002  | [Project Name]  | [ACTIVE]    | One-line description                 |
-
-## Deployment Targets
-<!-- See Deployment section in this file for details -->
-| Target      | Environments | Description                        |
-|-------------|--------------|------------------------------------|
-| local       | dev          | Developer workstation              |
-| homeserver  | dev, tst, prd| Self-hosted multi-environment      |
-| clientA     | prd          | Client A production                |
-| clientB     | prd          | Client B production                |
-```
-
----
+- If creating a new SYSTEM.md, use template at `docs/templates/SYSTEM.template.md`.
 
 ## General
 
@@ -63,7 +32,8 @@ The expected `SYSTEM.md` format is:
 
 ## Memory
 
-- `MEMORY.md` is the only place for persistent learnings. Update it when you discover gotchas, failed patterns, or non-obvious constraints.
+- `MEMORY.md` is the ONLY mechanism for persistent learnings. Entries must be self-contained plain text — no links to external files or ~/.claude paths.
+- Auto memory (Claude Code's built-in system) is disabled for this project.
 - Never solve the same problem twice — if you're re-discovering something, it belongs in `MEMORY.md`.
 
 ---
@@ -100,71 +70,10 @@ Every project must support at least two environment configurations: **dev** (loc
 
 ## Deployment
 
-### Overview
-
-Deployment configuration lives in two places:
-- **`docs/SYSTEM.md`** — Describes the deployment topology: which targets exist, what environments run on each, and the general deployment procedure. This is committed to git.
-- **`.deploy-secrets`** — Contains connection credentials (IPs, usernames, SSH keys, ports) for each target. **This file is in `.gitignore` and must never be committed.**
-
-### `.deploy-secrets` Format
-
-```
-# .deploy-secrets — NOT committed to git
-# One section per target+environment combination
-
-[homeserver.dev]
-HOST=192.168.x.x
-SSH_USER=deploy
-SSH_KEY_PATH=~/.ssh/homeserver
-DEPLOY_PATH=/opt/apps/myapp-dev
-PORT=8081
-
-[homeserver.prd]
-HOST=192.168.x.x
-SSH_USER=deploy
-SSH_KEY_PATH=~/.ssh/homeserver
-DEPLOY_PATH=/opt/apps/myapp
-PORT=8080
-
-[clientA.prd]
-HOST=<ip>
-SSH_USER=<user>
-SSH_KEY_PATH=~/.ssh/clientA
-DEPLOY_PATH=/opt/apps/myapp
-PORT=8080
-```
-
-### Rules
-
-- Before any deployment, read `.deploy-secrets` and verify the target exists.
-- **Never deploy to a `prd` target without explicit user confirmation.**
-- Always run regression tests before deploying (see Testing section). Deploy to `tst` targets from the `tst` branch; deploy to `prd` targets from `main` only.
-- Log every deployment action: target, environment, timestamp, commit hash in `DEPLOYMENTS.md`.
-- If `.deploy-secrets` does not exist or is missing a target, stop and ask the user to provide the credentials.
-
-### Deployment Procedure in `docs/SYSTEM.md`
-
-The `Deployment` section in `SYSTEM.md` describes the procedure (steps) for deploying to each target category. The procedure is committed; the secrets are not. Example:
-
-```markdown
-## Deployment
-
-### Procedure
-1. Run regression tests (`TESTS.md`) — all must pass
-2. Build the project for the target environment
-3. Read `.deploy-secrets` for the target
-4. SSH to the target and deploy
-5. Run smoke tests against the deployed instance
-6. Log the deployment in `DEPLOYMENTS.md`
-
-### Targets
-| Target      | Environments | Description                        |
-|-------------|--------------|------------------------------------|
-| local       | dev          | Developer workstation              |
-| homeserver  | dev, tst, prd| Self-hosted multi-environment      |
-| clientA     | prd          | Client A production                |
-| clientB     | prd          | Client B production                |
-```
+- Use the approriate skill when deploying.
+- Secrets are in `.deploy-secrets` (gitignored, never committed).
+- After any deployment incident or procedural change, update the corresponding skill to reflect what actually works.
+- Never deploy to `prd` without explicit user confirmation.
 
 ---
 

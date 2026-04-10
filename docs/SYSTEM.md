@@ -48,23 +48,7 @@ cp -r examples/example_full_app apps/
 cp -r examples/example_companion apps/
 ```
 
-## Deployment
-
-### Procedure
-1. Run regression tests (`TESTS.md`) — all must pass
-2. Read `.deploy-secrets` for the target
-3. SSH to the target, `git pull` the correct branch
-4. **DEV/TST only:** Copy example apps to `apps/`:
-   ```
-   cp -r examples/example_full_app apps/
-   cp -r examples/example_companion apps/
-   ```
-   PRD does **not** deploy example apps — only real apps live in PRD `apps/`.
-5. Restart the service
-6. Run smoke tests against the deployed instance
-7. Log the deployment in `DEPLOYMENTS.md`
-
-### Targets
+## Deployment Targets
 | Target      | Environments | Description                        |
 |-------------|--------------|------------------------------------|
 | local       | dev          | Developer workstation (macOS)      |

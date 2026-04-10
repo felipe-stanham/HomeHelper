@@ -1,3 +1,4 @@
 {
-  "enableAllProjectMcpServers": true
+  "enableAllProjectMcpServers": true,
+  "autoMemoryEnabled": false
 }
