@@ -117,7 +117,11 @@ class ServiceManager:
             "python", app.manifest.main_file,
             "--port", str(app.runtime_info.assigned_port)
         ]
-        
+
+        # Add MCP port if app has MCP enabled and port is allocated
+        if app.mcp_info and app.mcp_info.enabled and app.mcp_info.mcp_port:
+            cmd_args.extend(["--mcp-port", str(app.mcp_info.mcp_port)])
+
         # Add optional arguments based on config
         if app.manifest.config and app.manifest.config.data_dir:
             data_dir = Path(self.config_manager.get_data_dir()) / app_id

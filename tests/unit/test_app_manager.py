@@ -645,7 +645,6 @@ class TestEvolvedManifest:
             "config": {
                 "database": True,
                 "mcp_server": True,
-                "mcp_port": 9001,
                 "has_web_ui": True,
                 "redis_streams_publish": ["crm.contacts.created"],
                 "redis_streams_subscribe": ["scraper.leads.new"],
@@ -654,7 +653,6 @@ class TestEvolvedManifest:
         manifest = AppManifest(**data)
         assert manifest.config.database is True
         assert manifest.config.mcp_server is True
-        assert manifest.config.mcp_port == 9001
         assert manifest.config.has_web_ui is True
         assert manifest.config.redis_streams_publish == ["crm.contacts.created"]
         assert manifest.config.redis_streams_subscribe == ["scraper.leads.new"]
@@ -690,7 +688,6 @@ class TestEvolvedManifest:
         manifest = AppManifest(**data)
         assert manifest.config.database is False
         assert manifest.config.mcp_server is False
-        assert manifest.config.mcp_port is None
         assert manifest.config.has_web_ui is False
         assert manifest.config.redis_streams_publish == []
         assert manifest.config.redis_streams_subscribe == []
@@ -750,7 +747,7 @@ class TestNewDataclasses:
         manifest = AppManifest(
             name="crm", type=AppType.SERVICE, description="CRM",
             version="1.0.0", author="Test", main_file="app.py",
-            config=AppConfig(database=True, mcp_server=True, mcp_port=9001),
+            config=AppConfig(database=True, mcp_server=True),
             requires=[ManifestDependency(app="kb", min_version="1.0.0")],
         )
         entry = AppRegistryEntry(
@@ -946,7 +943,7 @@ class TestDiscoveryNewFields:
         manifest = {
             "name": "mcp-app", "type": "service", "description": "MCP app",
             "version": "1.0.0", "author": "Test", "main_file": "app.py",
-            "config": {"mcp_server": True, "mcp_port": 9001},
+            "config": {"mcp_server": True},
         }
         (app_dir / "latarnia.json").write_text(json.dumps(manifest))
         (app_dir / "app.py").write_text("# main")
@@ -954,7 +951,22 @@ class TestDiscoveryNewFields:
         entry = app_manager.registry.get_app_by_name("mcp-app")
         assert entry.mcp_info is not None
         assert entry.mcp_info.enabled is True
-        assert entry.mcp_info.mcp_port == 9001
+        assert entry.mcp_info.mcp_port is None  # Port assigned at launch, not discovery
+
+    def test_discovery_rejects_manifest_with_mcp_port(self, app_manager, temp_dirs):
+        """Manifests declaring mcp_port are rejected"""
+        app_dir = temp_dirs / "apps" / "bad-mcp-app"
+        app_dir.mkdir()
+        manifest = {
+            "name": "bad-mcp-app", "type": "service", "description": "Bad MCP app",
+            "version": "1.0.0", "author": "Test", "main_file": "app.py",
+            "config": {"mcp_server": True, "mcp_port": 9001},
+        }
+        (app_dir / "latarnia.json").write_text(json.dumps(manifest))
+        (app_dir / "app.py").write_text("# main")
+        count = app_manager.discover_apps()
+        assert count == 0
+        assert app_manager.registry.get_app_by_name("bad-mcp-app") is None
 
     def test_discovery_populates_stream_info(self, app_manager, temp_dirs):
         app_dir = temp_dirs / "apps" / "stream-app"

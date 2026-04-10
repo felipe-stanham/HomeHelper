@@ -60,9 +60,22 @@ class MacOSProcessManager:
                 self.port_manager.release_port(app_id)
                 return False
             
+            # Allocate MCP port if app has MCP enabled
+            mcp_port = None
+            if app.mcp_info and app.mcp_info.enabled:
+                mcp_port = self.port_manager.allocate_mcp_port(app_id)
+                if not mcp_port:
+                    self.logger.error(f"Failed to allocate MCP port for app {app_id}")
+                    self.port_manager.release_port(app_id)
+                    return False
+
             # Build arguments
             cmd = ["python3", str(main_file), "--port", str(port)]
-            
+
+            # Add MCP port if allocated
+            if mcp_port:
+                cmd.extend(["--mcp-port", str(mcp_port)])
+
             # Add Redis URL if required
             if app.manifest.config.redis_required:
                 redis_url = self.config_manager.get_redis_url()
@@ -107,10 +120,11 @@ class MacOSProcessManager:
             self.processes[app_id] = {
                 'pid': process.pid,
                 'port': port,
+                'mcp_port': mcp_port,
                 'started_at': datetime.now(),
                 'command': ' '.join(cmd)
             }
-            
+
             # Update app registry
             self.app_manager.registry.update_app(
                 app_id,
@@ -120,12 +134,13 @@ class MacOSProcessManager:
             app.runtime_info.assigned_port = port
             app.runtime_info.process_id = str(process.pid)
             app.runtime_info.started_at = datetime.now()
-            
-            # Log MCP port alongside REST port if MCP is enabled
-            if app.mcp_info and app.mcp_info.enabled and app.mcp_info.mcp_port:
+
+            # Store allocated MCP port in MCPInfo at launch time
+            if mcp_port and app.mcp_info:
+                app.mcp_info.mcp_port = mcp_port
                 self.logger.info(
                     f"Started app {app_id} (PID: {process.pid}, REST port: {port}, "
-                    f"MCP port: {app.mcp_info.mcp_port})"
+                    f"MCP port: {mcp_port})"
                 )
             else:
                 self.logger.info(f"Started app {app_id} (PID: {process.pid}, Port: {port})")
@@ -136,6 +151,7 @@ class MacOSProcessManager:
             if app_id in self.processes:
                 del self.processes[app_id]
             self.port_manager.release_port(app_id)
+            self.port_manager.release_mcp_port(app_id)
             return False
     
     def stop_app(self, app_id: str) -> bool:
@@ -163,15 +179,18 @@ class MacOSProcessManager:
             except psutil.NoSuchProcess:
                 self.logger.warning(f"Process {pid} for app {app_id} not found")
             
-            # Release port
+            # Release ports
             self.port_manager.release_port(app_id)
-            
+            self.port_manager.release_mcp_port(app_id)
+
             # Update registry
             app = self.app_manager.registry.get_app(app_id)
             if app:
                 self.app_manager.registry.update_app(app_id, status='stopped')
                 app.runtime_info.process_id = None
                 app.runtime_info.assigned_port = None
+                if app.mcp_info:
+                    app.mcp_info.mcp_port = None
             
             # Remove from tracking
             del self.processes[app_id]
@@ -198,6 +217,10 @@ class MacOSProcessManager:
             self.logger.warning(f"Process {pid} for app {app_id} died unexpectedly")
             del self.processes[app_id]
             self.port_manager.release_port(app_id)
+            self.port_manager.release_mcp_port(app_id)
+            app = self.app_manager.registry.get_app(app_id)
+            if app and app.mcp_info:
+                app.mcp_info.mcp_port = None
             return "error"
     
     def get_process_info(self, app_id: str) -> Optional[dict]:

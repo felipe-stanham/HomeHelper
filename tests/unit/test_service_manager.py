@@ -147,10 +147,22 @@ class TestServiceManager:
         """Test service template generation for app without assigned port"""
         sample_service_app.runtime_info.assigned_port = None
         mock_app_manager.registry.get_app.return_value = sample_service_app
-        
+
         template = service_manager.generate_service_template("test-service")
-        
+
         assert template is None
+
+    def test_generate_service_template_with_mcp_port(self, service_manager, mock_app_manager, sample_service_app, temp_dirs):
+        """Test service template includes --mcp-port for MCP-enabled apps"""
+        from latarnia.managers.app_manager import MCPInfo
+        sample_service_app.mcp_info = MCPInfo(enabled=True, mcp_port=9001)
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        template = service_manager.generate_service_template("test-service")
+
+        assert template is not None
+        assert "--mcp-port 9001" in template
+        assert "--port 8100" in template
     
     @patch('subprocess.run')
     def test_create_service_file_success(self, mock_subprocess, service_manager, mock_app_manager, sample_service_app):

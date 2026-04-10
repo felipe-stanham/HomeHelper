@@ -110,6 +110,14 @@ Critical-path tests for Latarnia. Each test is declarative — Claude Code gener
 
 - **test_port_statistics_includes_mcp:** Create `PortManager` with MCP range 9001-9005 (5 ports). Allocate MCP ports for `"app1"` and `"app2"`. Call `get_port_statistics()`. -> Returns `mcp_total_ports == 5`, `mcp_allocated_ports == 2`, `mcp_utilization_percent == 40.0`.
 
+## MCP Launch Integration
+
+- **test_manifest_rejects_mcp_port:** Create a manifest with `config.mcp_port: 9001`. Call `_parse_manifest()`. -> Returns `None` (manifest rejected).
+
+- **test_discovery_mcp_info_no_port:** Create a manifest with `config.mcp_server: true` (no `mcp_port`). Call `discover_apps()`. -> App is registered. `mcp_info.enabled == True`. `mcp_info.mcp_port` is `None` (port assigned at launch).
+
+- **test_service_template_includes_mcp_port:** Create a service app entry with `mcp_info.enabled=True, mcp_info.mcp_port=9001`. Call `generate_service_template()`. -> Template contains `--mcp-port 9001`.
+
 ## MCP Gateway
 
 - **test_mcp_config_defaults:** Create `MCPConfig()` with no arguments. -> `enabled == False`, `transport == "sse"`, `gateway_path == "/mcp"`, `tool_sync_interval_seconds == 300`.
