@@ -96,6 +96,28 @@ Critical-path tests for Latarnia. Each test is declarative — Claude Code gener
 
 - **test_stale_port_cleanup:** Allocate a port for `"app-1"`. Set `allocation.allocated_at` to 2 hours ago. Mock socket bind to succeed (port is actually free). Call `cleanup_stale_allocations()`. -> Returns `1`. `"app-1"` is no longer in `app_ports`.
 
+## MCP Port Management
+
+- **test_mcp_port_allocation_within_range:** Create `PortManager` with config `mcp_port_range.start=9001, mcp_port_range.end=9005`. Mock `socket.socket.bind` to succeed. Call `allocate_mcp_port("app-1")`. -> Returns a port between 9001 and 9005 inclusive. `app_mcp_ports["app-1"]` equals the returned port.
+
+- **test_mcp_port_allocation_exhausted:** Create `PortManager` with config `mcp_port_range.start=9001, mcp_port_range.end=9005`. Mock `socket.socket.bind` to raise `OSError` for all ports. Call `allocate_mcp_port("app-1")`. -> Returns `None`.
+
+- **test_mcp_port_release:** Allocate an MCP port for `"app-1"`. Call `release_mcp_port("app-1")`. -> Returns `True`. `get_app_mcp_port("app-1")` returns `None`. The port is no longer in `mcp_allocations`.
+
+- **test_mcp_port_reuse_for_same_app:** Allocate an MCP port for `"app-1"`. Call `allocate_mcp_port("app-1")` again. -> Returns the same port as the first allocation.
+
+- **test_mcp_ports_independent_from_rest:** Allocate a REST port and an MCP port for `"app-1"`. Release REST port. -> MCP port is still allocated. `get_app_mcp_port("app-1")` returns the MCP port.
+
+- **test_port_statistics_includes_mcp:** Create `PortManager` with MCP range 9001-9005 (5 ports). Allocate MCP ports for `"app1"` and `"app2"`. Call `get_port_statistics()`. -> Returns `mcp_total_ports == 5`, `mcp_allocated_ports == 2`, `mcp_utilization_percent == 40.0`.
+
+## MCP Launch Integration
+
+- **test_manifest_rejects_mcp_port:** Create a manifest with `config.mcp_port: 9001`. Call `_parse_manifest()`. -> Returns `None` (manifest rejected).
+
+- **test_discovery_mcp_info_no_port:** Create a manifest with `config.mcp_server: true` (no `mcp_port`). Call `discover_apps()`. -> App is registered. `mcp_info.enabled == True`. `mcp_info.mcp_port` is `None` (port assigned at launch).
+
+- **test_service_template_includes_mcp_port:** Create a service app entry with `mcp_info.enabled=True, mcp_info.mcp_port=9001`. Call `generate_service_template()`. -> Template contains `--mcp-port 9001`.
+
 ## MCP Gateway
 
 - **test_mcp_config_defaults:** Create `MCPConfig()` with no arguments. -> `enabled == False`, `transport == "sse"`, `gateway_path == "/mcp"`, `tool_sync_interval_seconds == 300`.
@@ -185,6 +207,8 @@ These tests require the Playwright MCP server and a running local dev instance o
 - **test_example_app_add_item_via_ui:** Navigate to `http://localhost:8100/`. Fill in the "Item name" input with "playwright-test-item" and description with "added by test". Click the "Add" button. -> Items table updates to include a row with "playwright-test-item".
 
 ### MCP via Platform Gateway
+
+- **test_mcp_dynamic_port_allocation:** After example_full_app is started, send GET to `http://localhost:8000/api/apps`. -> The `example_full_app` entry has `mcp_info.enabled == true` and `mcp_info.mcp_port` is an integer in range 9001-9099 (dynamically allocated, not hardcoded).
 
 - **test_mcp_gateway_lists_example_tools:** After example_full_app is started, send GET to `http://localhost:8000/api/apps`. -> The `example_full_app` entry has `mcp_info.healthy == true` and `mcp_info.registered_tools` contains `["list_items", "add_item", "get_status"]`.
 

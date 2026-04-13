@@ -1,7 +1,10 @@
-# Memory Index
+# Memory
 
-- [Test in DEV before deploying](../../.claude-dor/projects/-Users-felipestanham-Desktop-MyProjects-HomeHelper/memory/feedback_test_before_deploy.md) — Always run local tests before deploying to TST; never skip to remote deployment
-- [MCP server configuration](../../.claude-dor/projects/-Users-felipestanham-Desktop-MyProjects-HomeHelper/memory/reference_mcp_servers.md) — MCP servers go in `.mcp.json` (not settings.json); lists available servers (latarnia-tst, playwright)
-- [Example apps as test fixtures](../../.claude-dor/projects/-Users-felipestanham-Desktop-MyProjects-HomeHelper/memory/feedback_example_app_as_test_fixture.md) — Platform changes must update example_full_app; it's the integration test vehicle
-- [Always log deployments](../../.claude-dor/projects/-Users-felipestanham-Desktop-MyProjects-HomeHelper/memory/feedback_log_deployments.md) — Log every deployment in DEPLOYMENTS.md immediately after deploying
-- [CLAUDE.md is project-agnostic](../../.claude-dor/projects/-Users-felipestanham-Desktop-MyProjects-HomeHelper/memory/feedback_claude_md_agnostic.md) — Project-specific rules go in SYSTEM.md, not CLAUDE.md
+## Index
+
+- **test-before-deploy:** Always run unit tests and local dev verification before deploying to TST. → [memory/testing-before-deploy.md](memory/testing-before-deploy.md)
+- **log-deployments:** After every deployment, add a row to `DEPLOYMENTS.md` (date, target, branch, commit, notes). Do not skip.
+- **claude-md-agnostic:** CLAUDE.md is a reusable template. Project-specific rules go in `docs/SYSTEM.md`, learnings go here.
+- **example-apps-are-fixtures:** `examples/` is the source of truth for example apps (committed). `apps/` is gitignored. Platform changes must update `example_full_app` to exercise the new feature.
+- **mcp-server-config:** MCP servers go in `.mcp.json`, not `settings.json`. User runs `claude-dor` profile. → [memory/mcp-server-config.md](memory/mcp-server-config.md)
+- **scope-branch-naming:** Branch naming uses dashes not slashes: `scope-P-XXXX-N-description` (not `scope/`).

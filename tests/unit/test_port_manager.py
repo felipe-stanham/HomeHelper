@@ -33,11 +33,13 @@ class TestPortManager:
         mock_config = Mock()
         mock_config.process_manager.port_range.start = 8100
         mock_config.process_manager.port_range.end = 8105  # Small range for testing
-        
+        mock_config.process_manager.mcp_port_range.start = 9001
+        mock_config.process_manager.mcp_port_range.end = 9005  # Small range for testing
+
         mock_config_manager = Mock(spec=ConfigManager)
         mock_config_manager.config = mock_config
         mock_config_manager.get_data_dir.return_value = temp_config_dir
-        
+
         return mock_config_manager
     
     @pytest.fixture
@@ -76,13 +78,17 @@ class TestPortManager:
         """Test PortManager initialization"""
         with patch('socket.socket') as mock_socket:
             mock_socket.return_value.__enter__.return_value.bind.return_value = None
-            
+
             port_manager = PortManager(mock_config_manager)
-            
+
             assert port_manager.port_start == 8100
             assert port_manager.port_end == 8105
+            assert port_manager.mcp_port_start == 9001
+            assert port_manager.mcp_port_end == 9005
             assert len(port_manager.allocations) == 0
             assert len(port_manager.app_ports) == 0
+            assert len(port_manager.mcp_allocations) == 0
+            assert len(port_manager.app_mcp_ports) == 0
     
     @patch('socket.socket')
     def test_allocate_port_success(self, mock_socket, port_manager):
@@ -288,11 +294,120 @@ class TestPortManager:
         """Test that no persistence files are created"""
         with patch('socket.socket') as mock_socket:
             mock_socket.return_value.__enter__.return_value.bind.return_value = None
-            
+
             # Create port manager and allocate ports
             port_manager = PortManager(mock_config_manager)
             port_manager.allocate_port("app1", "service")
-            
+
             # Verify no persistence files were created
             ports_file = temp_config_dir / "registry" / "ports.json"
             assert not ports_file.exists()  # No persistence file should be created
+
+    # --- MCP Port Allocation Tests ---
+
+    @patch('socket.socket')
+    def test_allocate_mcp_port_success(self, mock_socket, port_manager):
+        """Test successful MCP port allocation"""
+        mock_socket.return_value.__enter__.return_value.bind.return_value = None
+
+        mcp_port = port_manager.allocate_mcp_port("test-app")
+
+        assert mcp_port is not None
+        assert 9001 <= mcp_port <= 9005
+        assert mcp_port in port_manager.mcp_allocations
+        assert port_manager.app_mcp_ports["test-app"] == mcp_port
+
+        allocation = port_manager.mcp_allocations[mcp_port]
+        assert allocation.app_id == "test-app"
+        assert allocation.app_type == "mcp"
+        assert allocation.status == "allocated"
+
+    @patch('socket.socket')
+    def test_allocate_mcp_port_no_available(self, mock_socket, port_manager):
+        """Test MCP port allocation when no ports are available"""
+        mock_socket.return_value.__enter__.return_value.bind.side_effect = OSError("Port in use")
+
+        mcp_port = port_manager.allocate_mcp_port("test-app")
+
+        assert mcp_port is None
+        assert "test-app" not in port_manager.app_mcp_ports
+
+    @patch('socket.socket')
+    def test_allocate_mcp_port_reuse_existing(self, mock_socket, port_manager):
+        """Test reusing existing MCP port allocation"""
+        mock_socket.return_value.__enter__.return_value.bind.return_value = None
+
+        port1 = port_manager.allocate_mcp_port("test-app")
+        assert port1 is not None
+
+        port2 = port_manager.allocate_mcp_port("test-app")
+        assert port2 == port1
+
+    def test_release_mcp_port_success(self, port_manager):
+        """Test successful MCP port release"""
+        with patch('socket.socket') as mock_socket:
+            mock_socket.return_value.__enter__.return_value.bind.return_value = None
+
+            mcp_port = port_manager.allocate_mcp_port("test-app")
+            assert mcp_port is not None
+
+            result = port_manager.release_mcp_port("test-app")
+
+            assert result is True
+            assert "test-app" not in port_manager.app_mcp_ports
+            assert mcp_port not in port_manager.mcp_allocations
+
+    def test_release_mcp_port_not_found(self, port_manager):
+        """Test releasing MCP port for non-existent app"""
+        result = port_manager.release_mcp_port("non-existent-app")
+        assert result is False
+
+    @patch('socket.socket')
+    def test_get_app_mcp_port(self, mock_socket, port_manager):
+        """Test getting MCP port for an app"""
+        mock_socket.return_value.__enter__.return_value.bind.return_value = None
+
+        assert port_manager.get_app_mcp_port("test-app") is None
+
+        allocated_port = port_manager.allocate_mcp_port("test-app")
+        assert port_manager.get_app_mcp_port("test-app") == allocated_port
+
+    @patch('socket.socket')
+    def test_mcp_ports_independent_from_rest_ports(self, mock_socket, port_manager):
+        """Test that MCP and REST port allocations are independent"""
+        mock_socket.return_value.__enter__.return_value.bind.return_value = None
+
+        rest_port = port_manager.allocate_port("test-app", "service")
+        mcp_port = port_manager.allocate_mcp_port("test-app")
+
+        assert rest_port is not None
+        assert mcp_port is not None
+        assert rest_port != mcp_port
+        assert port_manager.app_ports["test-app"] == rest_port
+        assert port_manager.app_mcp_ports["test-app"] == mcp_port
+
+        # Release REST port should not affect MCP port
+        port_manager.release_port("test-app")
+        assert port_manager.get_app_mcp_port("test-app") == mcp_port
+
+        # Release MCP port
+        port_manager.release_mcp_port("test-app")
+        assert port_manager.get_app_mcp_port("test-app") is None
+
+    @patch('socket.socket')
+    def test_port_statistics_includes_mcp(self, mock_socket, port_manager):
+        """Test that port statistics include MCP port counts"""
+        mock_socket.return_value.__enter__.return_value.bind.return_value = None
+
+        port_manager.allocate_port("app1", "service")
+        port_manager.allocate_mcp_port("app1")
+        port_manager.allocate_mcp_port("app2")
+
+        stats = port_manager.get_port_statistics()
+
+        assert stats['mcp_total_ports'] == 5  # 9001-9005
+        assert stats['mcp_allocated_ports'] == 2
+        assert stats['mcp_port_range'] == "9001-9005"
+        assert stats['mcp_utilization_percent'] == 40.0
+        # REST stats still correct
+        assert stats['allocated_ports'] == 1

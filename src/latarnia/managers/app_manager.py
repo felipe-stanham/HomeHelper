@@ -46,7 +46,6 @@ class AppConfig(BaseModel):
     redis_required: bool = False
     database: bool = False
     mcp_server: bool = False
-    mcp_port: Optional[int] = None
     logs_dir: bool = False
     data_dir: bool = False
     auto_start: bool = False
@@ -445,7 +444,7 @@ class AppManager:
                             )
                             database_info = DatabaseInfo()
                     mcp_info = (
-                        MCPInfo(enabled=True, mcp_port=manifest.config.mcp_port)
+                        MCPInfo(enabled=True)
                         if manifest.config and manifest.config.mcp_server else None
                     )
                     stream_info = None
@@ -536,10 +535,18 @@ class AppManager:
         try:
             with open(manifest_file, 'r') as f:
                 data = json.load(f)
-            
+
+            # Reject manifests that declare mcp_port (now dynamically allocated)
+            if data.get('config', {}).get('mcp_port') is not None:
+                self.logger.error(
+                    f"Manifest {manifest_file} declares 'mcp_port' which is no longer supported. "
+                    f"Remove 'mcp_port' from config — the platform allocates MCP ports dynamically."
+                )
+                return None
+
             # Validate with Pydantic
             manifest = AppManifest(**data)
-            
+
             # Additional validation
             app_path = manifest_file.parent
             main_file = app_path / manifest.main_file

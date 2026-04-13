@@ -31,8 +31,6 @@ def _make_app_entry(
 ) -> AppRegistryEntry:
     """Helper to create a test AppRegistryEntry with MCP settings."""
     config_kwargs = {"has_UI": True, "mcp_server": mcp_server}
-    if mcp_port is not None:
-        config_kwargs["mcp_port"] = mcp_port
 
     manifest = AppManifest(
         name="mcp-test-app",

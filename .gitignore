@@ -224,3 +224,5 @@ apps/
 # Keep runtime data and logs local (no persistence needed)
 data/
 logs/
+# Deployment log (local operational record, not source code)
+DEPLOYMENTS.md
