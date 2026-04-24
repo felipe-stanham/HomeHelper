@@ -7,6 +7,7 @@ Provides systemd service template generation and process monitoring capabilities
 
 import json
 import logging
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -89,9 +90,18 @@ class ServiceManager:
         # systemd paths
         self.systemd_user_dir = Path.home() / ".config" / "systemd" / "user"
         self.systemd_user_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Service name prefix
-        self.service_prefix = "latarnia-"
+
+        # Environment-scoped service prefix. TST and PRD run side-by-side on
+        # the homeserver under the same user; without the env segment,
+        # per-app unit files in ~/.config/systemd/user/ would collide.
+        env = os.environ.get("ENV", "dev").lower()
+        if env not in ("dev", "tst", "prd"):
+            self.logger.warning(
+                "Unrecognized ENV=%r; falling back to 'dev' for service naming", env
+            )
+            env = "dev"
+        self.env = env
+        self.service_prefix = f"latarnia-{env}-"
     
     def generate_service_template(self, app_id: str) -> Optional[str]:
         """
