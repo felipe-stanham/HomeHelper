@@ -4,6 +4,7 @@ Unit tests for ServiceManager and HealthMonitor
 Tests systemd service integration, health monitoring, and service lifecycle management.
 """
 
+import logging
 import pytest
 import tempfile
 import asyncio
@@ -104,19 +105,57 @@ class TestServiceManager:
         return app_entry
     
     @pytest.fixture
-    def service_manager(self, mock_config_manager, mock_app_manager, temp_dirs):
-        """Create ServiceManager instance for testing"""
+    def service_manager(self, mock_config_manager, mock_app_manager, temp_dirs, monkeypatch):
+        """Create ServiceManager instance for testing (ENV=dev)"""
+        monkeypatch.setenv("ENV", "dev")
         with patch.object(Path, 'home', return_value=temp_dirs['base']):
             manager = ServiceManager(mock_config_manager, mock_app_manager)
             # Override systemd directory for testing
             manager.systemd_user_dir = temp_dirs['systemd']
             return manager
-    
+
     def test_service_manager_initialization(self, service_manager, temp_dirs):
         """Test ServiceManager initialization"""
         assert service_manager.systemd_user_dir == temp_dirs['systemd']
-        assert service_manager.service_prefix == "latarnia-"
+        assert service_manager.env == "dev"
+        assert service_manager.service_prefix == "latarnia-dev-"
         assert service_manager.services == {}
+
+    @pytest.mark.parametrize("env_value,expected_prefix", [
+        ("dev", "latarnia-dev-"),
+        ("tst", "latarnia-tst-"),
+        ("prd", "latarnia-prd-"),
+        ("TST", "latarnia-tst-"),  # case-insensitive
+    ])
+    def test_service_prefix_matches_env(
+        self, mock_config_manager, mock_app_manager, temp_dirs, monkeypatch,
+        env_value, expected_prefix,
+    ):
+        """Service prefix is scoped per ENV so TST/PRD apps don't collide."""
+        monkeypatch.setenv("ENV", env_value)
+        with patch.object(Path, 'home', return_value=temp_dirs['base']):
+            manager = ServiceManager(mock_config_manager, mock_app_manager)
+        assert manager.service_prefix == expected_prefix
+
+    def test_service_prefix_defaults_to_dev_when_env_unset(
+        self, mock_config_manager, mock_app_manager, temp_dirs, monkeypatch,
+    ):
+        """Missing ENV falls back to dev — mirrors the rest of the codebase."""
+        monkeypatch.delenv("ENV", raising=False)
+        with patch.object(Path, 'home', return_value=temp_dirs['base']):
+            manager = ServiceManager(mock_config_manager, mock_app_manager)
+        assert manager.service_prefix == "latarnia-dev-"
+
+    def test_service_prefix_falls_back_on_unknown_env(
+        self, mock_config_manager, mock_app_manager, temp_dirs, monkeypatch, caplog,
+    ):
+        """Unrecognized ENV values log a warning and fall back to dev."""
+        monkeypatch.setenv("ENV", "staging")
+        with patch.object(Path, 'home', return_value=temp_dirs['base']):
+            with caplog.at_level(logging.WARNING, logger="latarnia.service_manager"):
+                manager = ServiceManager(mock_config_manager, mock_app_manager)
+        assert manager.service_prefix == "latarnia-dev-"
+        assert any("Unrecognized ENV" in rec.message for rec in caplog.records)
     
     def test_generate_service_template(self, service_manager, mock_app_manager, sample_service_app):
         """Test systemd service template generation"""
@@ -173,7 +212,7 @@ class TestServiceManager:
         result = service_manager.create_service_file("test-service")
         
         assert result is True
-        service_file = service_manager.systemd_user_dir / "latarnia-test-service.service"
+        service_file = service_manager.systemd_user_dir / "latarnia-dev-test-service.service"
         assert service_file.exists()
         
         # Verify systemctl daemon-reload was called
@@ -194,7 +233,7 @@ class TestServiceManager:
         
         assert result is True
         mock_subprocess.assert_called_with(
-            ["systemctl", "--user", "start", "latarnia-test-service.service"],
+            ["systemctl", "--user", "start", "latarnia-dev-test-service.service"],
             capture_output=True,
             text=True
         )
@@ -225,7 +264,7 @@ class TestServiceManager:
         
         assert result is True
         mock_subprocess.assert_called_with(
-            ["systemctl", "--user", "stop", "latarnia-test-service.service"],
+            ["systemctl", "--user", "stop", "latarnia-dev-test-service.service"],
             capture_output=True,
             text=True
         )
@@ -239,7 +278,7 @@ class TestServiceManager:
         
         assert result is True
         mock_subprocess.assert_called_with(
-            ["systemctl", "--user", "restart", "latarnia-test-service.service"],
+            ["systemctl", "--user", "restart", "latarnia-dev-test-service.service"],
             capture_output=True,
             text=True
         )
@@ -252,7 +291,7 @@ class TestServiceManager:
         
         with patch.object(service_manager, '_get_process_metrics') as mock_metrics:
             mock_metrics.return_value = ServiceInfo(
-                service_name="latarnia-test-service.service",
+                service_name="latarnia-dev-test-service.service",
                 status=ServiceStatus.ACTIVE,
                 state=ServiceState.RUNNING,
                 pid=12345,
@@ -281,7 +320,7 @@ class TestServiceManager:
         assert logs[2] == "Log line 3"
         
         mock_subprocess.assert_called_with(
-            ["journalctl", "--user", "-u", "latarnia-test-service.service", "-n", "3", "--no-pager"],
+            ["journalctl", "--user", "-u", "latarnia-dev-test-service.service", "-n", "3", "--no-pager"],
             capture_output=True,
             text=True
         )
@@ -295,7 +334,7 @@ class TestServiceManager:
         
         assert result is True
         mock_subprocess.assert_called_with(
-            ["systemctl", "--user", "enable", "latarnia-test-service.service"],
+            ["systemctl", "--user", "enable", "latarnia-dev-test-service.service"],
             capture_output=True,
             text=True
         )
@@ -309,7 +348,7 @@ class TestServiceManager:
         
         assert result is True
         mock_subprocess.assert_called_with(
-            ["systemctl", "--user", "disable", "latarnia-test-service.service"],
+            ["systemctl", "--user", "disable", "latarnia-dev-test-service.service"],
             capture_output=True,
             text=True
         )
