@@ -69,9 +69,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 ## 3. Install the main-platform unit files
 
-> **TODO — paste verified contents from the running Pi here.** Placeholder template below reflects the intended shape; the authoritative unit files live in `/etc/systemd/system/` on the homeserver and must be captured verbatim. Do not bootstrap from this placeholder alone.
+These are the authoritative unit files running on the homeserver (HERMES, `192.168.68.100`). Install each as root under `/etc/systemd/system/`.
 
-`/etc/systemd/system/latarnia-tst.service` (placeholder):
+`/etc/systemd/system/latarnia-tst.service`:
 ```ini
 [Unit]
 Description=Latarnia TST Environment
@@ -83,19 +83,40 @@ Type=simple
 User=felipe
 Group=felipe
 WorkingDirectory=/opt/latarnia/tst
-Environment=ENV=tst
-Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/latarnia/tst/.venv/bin/python -m latarnia.main
+ExecStart=/opt/latarnia/tst/.venv/bin/python -m uvicorn latarnia.main:app --host 0.0.0.0 --port 8000 --app-dir src
 Restart=on-failure
 RestartSec=5
-StandardOutput=journal
-StandardError=journal
+Environment=ENV=tst
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-`/etc/systemd/system/latarnia-prd.service` (placeholder): same shape with `ENV=prd`, `WorkingDirectory=/opt/latarnia/prd`, and the PRD port.
+`/etc/systemd/system/latarnia-prd.service`:
+```ini
+[Unit]
+Description=Latarnia PRD Environment
+After=network.target redis-server.service postgresql.service
+Wants=redis-server.service postgresql.service
+
+[Service]
+Type=simple
+User=felipe
+Group=felipe
+WorkingDirectory=/opt/latarnia/prd
+ExecStart=/opt/latarnia/prd/.venv/bin/python -m uvicorn latarnia.main:app --host 0.0.0.0 --port 8080 --app-dir src
+Restart=on-failure
+RestartSec=5
+Environment=ENV=prd
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Notes:
+- TST listens on `:8000`, PRD on `:8080` (matches `.deploy-secrets`).
+- `--app-dir src` matches the repo layout (`src/latarnia/`).
+- `Environment=ENV=...` is what `ServiceManager` reads to env-scope per-app unit names (see P-0004). Keep it in sync with `DEPLOY_PATH`.
 
 ## 4. Enable and start
 ```
