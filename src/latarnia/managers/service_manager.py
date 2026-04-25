@@ -188,6 +188,11 @@ class ServiceManager:
         if app.mcp_info and app.mcp_info.enabled and app.mcp_info.mcp_port:
             cmd_args.extend(["--mcp-port", str(app.mcp_info.mcp_port)])
 
+        # Pass --redis-url (matches SubprocessLauncher contract) so apps
+        # that read the CLI arg work identically under both launchers.
+        if app.manifest.config and app.manifest.config.redis_required:
+            cmd_args.extend(["--redis-url", self.config_manager.get_redis_url()])
+
         # Add optional arguments based on config
         if app.manifest.config and app.manifest.config.data_dir:
             data_dir = Path(self.config_manager.get_data_dir()) / app_id
@@ -239,6 +244,9 @@ class ServiceManager:
         # reading ENV (and ServiceManager itself if re-entrant) behave
         # consistently with the main platform unit. PartOf=latarnia-{env}
         # ensures stopping the main platform also stops its app units.
+        # No User= — these are user-scope units (`systemctl --user`) that
+        # already run as the invoking user; `User=` would be a setresuid
+        # call and fails with status=216/GROUP under user-mode systemd.
         main_unit = f"latarnia-{self.env}.service"
         service_template = f"""[Unit]
 Description=Latarnia Service - {app.manifest.name}
@@ -248,7 +256,6 @@ PartOf={main_unit}
 
 [Service]
 Type=simple
-User={Path.home().owner()}
 WorkingDirectory={app.path}
 ExecStart={' '.join(cmd_args)}
 Restart={restart_policy}
