@@ -49,7 +49,7 @@ class AppConfig(BaseModel):
     logs_dir: bool = False
     data_dir: bool = False
     auto_start: bool = False
-    restart_policy: str = Field(default="always", pattern=r'^(always|on-failure|never)$')
+    restart_policy: str = Field(default="on-failure", pattern=r'^(always|on-failure|never)$')
     redis_streams_publish: List[str] = Field(default_factory=list)
     redis_streams_subscribe: List[str] = Field(default_factory=list)
 
