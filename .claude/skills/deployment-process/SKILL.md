@@ -87,6 +87,7 @@ ExecStart=/opt/latarnia/tst/.venv/bin/python -m uvicorn latarnia.main:app --host
 Restart=on-failure
 RestartSec=5
 Environment=ENV=tst
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 
 [Install]
 WantedBy=multi-user.target
@@ -108,6 +109,7 @@ ExecStart=/opt/latarnia/prd/.venv/bin/python -m uvicorn latarnia.main:app --host
 Restart=on-failure
 RestartSec=5
 Environment=ENV=prd
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 
 [Install]
 WantedBy=multi-user.target
@@ -117,6 +119,7 @@ Notes:
 - TST listens on `:8000`, PRD on `:8080` (matches `.deploy-secrets`).
 - `--app-dir src` matches the repo layout (`src/latarnia/`).
 - `Environment=ENV=...` is what `ServiceManager` reads to env-scope per-app unit names (see P-0004). Keep it in sync with `DEPLOY_PATH`.
+- `Environment=XDG_RUNTIME_DIR=/run/user/1000` (felipe's UID) is required so the system-scope main platform can talk to felipe's user-scope systemd manager when launching per-app units (P-0005). Without it, `/api/apps/{id}/process/start` fails with `Failed to connect to user scope bus via local transport`. Confirm felipe's UID with `id -u felipe`; the value is stable per host.
 
 ## 4. Enable user-mode linger for `felipe`
 

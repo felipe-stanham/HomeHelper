@@ -322,6 +322,34 @@ class TestServiceManager:
         mock_app_manager.registry.update_app.assert_called_with("test-service", status=AppStatus.RUNNING)
 
     @patch('subprocess.run')
+    def test_start_service_creates_unit_file_before_start(
+        self, mock_subprocess, service_manager, mock_app_manager, sample_service_app,
+    ):
+        """start_service is one-shot: it must (re)write the unit file and
+        daemon-reload before invoking `systemctl --user start`. Regression
+        test for a bug where /api/apps/{id}/process/start returned 500
+        because the unit had not been created."""
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+        mock_subprocess.return_value.returncode = 0
+        mock_subprocess.return_value.stderr = ""
+
+        # Pre-condition: the unit file does not exist.
+        unit_path = service_manager.systemd_user_dir / "latarnia-dev-test-service.service"
+        assert not unit_path.exists()
+
+        assert service_manager.start_service("test-service") is True
+
+        # The unit file must now exist (created by start_service).
+        assert unit_path.exists()
+        # The systemctl invocations include both daemon-reload and start.
+        invocations = [call.args[0] for call in mock_subprocess.call_args_list]
+        assert ["systemctl", "--user", "daemon-reload"] in invocations
+        assert (
+            ["systemctl", "--user", "start", "latarnia-dev-test-service.service"]
+            in invocations
+        )
+
+    @patch('subprocess.run')
     def test_start_service_end_to_end(
         self, mock_subprocess, service_manager, mock_app_manager, sample_service_app,
     ):
@@ -354,18 +382,33 @@ class TestServiceManager:
     
     @patch('subprocess.run')
     def test_start_service_failure(self, mock_subprocess, service_manager, mock_app_manager, sample_service_app):
-        """Test failed service start"""
+        """systemctl --user start fails → app marked ERROR.
+
+        start_service now creates the unit file (daemon-reload) before
+        starting; let daemon-reload succeed and have only the start call
+        return non-zero.
+        """
         mock_app_manager.registry.get_app.return_value = sample_service_app
-        mock_subprocess.return_value.returncode = 1
-        mock_subprocess.return_value.stderr = "Service failed to start"
-        
+
+        def fake_run(args, **_kwargs):
+            result = Mock()
+            if args[:3] == ["systemctl", "--user", "start"]:
+                result.returncode = 1
+                result.stderr = "Service failed to start"
+            else:
+                result.returncode = 0
+                result.stderr = ""
+            return result
+
+        mock_subprocess.side_effect = fake_run
+
         result = service_manager.start_service("test-service")
-        
+
         assert result is False
-        mock_app_manager.registry.update_app.assert_called_with(
-            "test-service", 
+        mock_app_manager.registry.update_app.assert_any_call(
+            "test-service",
             status=AppStatus.ERROR,
-            runtime_info=sample_service_app.runtime_info
+            runtime_info=sample_service_app.runtime_info,
         )
     
     @patch('subprocess.run')
