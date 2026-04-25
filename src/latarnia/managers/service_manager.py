@@ -211,8 +211,10 @@ class ServiceManager:
             redis_config = self.config_manager.config.redis
             env_vars.append(f"REDIS_HOST={redis_config.host}")
             env_vars.append(f"REDIS_PORT={redis_config.port}")
-            if redis_config.password:
-                env_vars.append(f"REDIS_PASSWORD={redis_config.password}")
+            # password is optional in RedisConfig — guard via getattr.
+            redis_password = getattr(redis_config, "password", None)
+            if redis_password:
+                env_vars.append(f"REDIS_PASSWORD={redis_password}")
         
         # Add database URL via environment variable (not command line)
         if db_url_env:
