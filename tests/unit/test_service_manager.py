@@ -54,11 +54,12 @@ class TestServiceManager:
         mock_config.redis.host = "localhost"
         mock_config.redis.port = 6379
         mock_config.redis.password = None
-        
+
         mock_config_manager = Mock(spec=ConfigManager)
         mock_config_manager.config = mock_config
         mock_config_manager.get_data_dir.return_value = temp_dirs['config']
         mock_config_manager.get_logs_dir.return_value = temp_dirs['config'] / "logs"
+        mock_config_manager.get_redis_url.return_value = "redis://localhost:6379/0"
         return mock_config_manager
     
     @pytest.fixture
