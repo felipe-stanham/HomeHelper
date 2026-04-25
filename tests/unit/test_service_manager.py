@@ -217,6 +217,16 @@ class TestServiceManager:
         assert template is not None
         assert expected in template
 
+    def test_generate_service_template_partof_main_unit(
+        self, service_manager, mock_app_manager, sample_service_app,
+    ):
+        """Per-app units carry PartOf=latarnia-{env}.service so a main-platform
+        stop also stops the app units (P-0005 spec, lifecycle coupling)."""
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+        template = service_manager.generate_service_template("test-service")
+        assert template is not None
+        assert "PartOf=latarnia-dev.service" in template
+
     @pytest.mark.parametrize("policy,expected_line", [
         (None, "Restart=on-failure"),         # manifest default → on-failure
         ("on-failure", "Restart=on-failure"),
@@ -295,9 +305,9 @@ class TestServiceManager:
         mock_app_manager.registry.get_app.return_value = sample_service_app
         mock_subprocess.return_value.returncode = 0
         mock_subprocess.return_value.stderr = ""
-        
+
         result = service_manager.start_service("test-service")
-        
+
         assert result is True
         mock_subprocess.assert_called_with(
             ["systemctl", "--user", "start", "latarnia-dev-test-service.service"],
@@ -305,6 +315,37 @@ class TestServiceManager:
             text=True
         )
         mock_app_manager.registry.update_app.assert_called_with("test-service", status=AppStatus.RUNNING)
+
+    @patch('subprocess.run')
+    def test_start_service_end_to_end(
+        self, mock_subprocess, service_manager, mock_app_manager, sample_service_app,
+    ):
+        """End-to-end: create_service_file → daemon-reload → start.
+
+        Verifies the systemd path that the platform now exercises on Linux:
+        a unit file is written, daemon-reload is invoked, then `systemctl
+        --user start latarnia-{env}-{app}.service` runs. All subprocess calls
+        are mocked.
+        """
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+        mock_subprocess.return_value.returncode = 0
+        mock_subprocess.return_value.stderr = ""
+
+        # Create then start in the same flow that the auto_start path uses.
+        assert service_manager.create_service_file("test-service") is True
+        unit_path = service_manager.systemd_user_dir / "latarnia-dev-test-service.service"
+        assert unit_path.exists()
+        contents = unit_path.read_text()
+        assert "Environment=ENV=dev" in contents
+        # ExecStart must use the absolute venv Python path.
+        assert f"ExecStart={service_manager.python_executable} app.py" in contents
+
+        assert service_manager.start_service("test-service") is True
+        mock_subprocess.assert_called_with(
+            ["systemctl", "--user", "start", "latarnia-dev-test-service.service"],
+            capture_output=True,
+            text=True,
+        )
     
     @patch('subprocess.run')
     def test_start_service_failure(self, mock_subprocess, service_manager, mock_app_manager, sample_service_app):

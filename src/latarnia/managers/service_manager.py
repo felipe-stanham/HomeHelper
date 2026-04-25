@@ -229,11 +229,14 @@ class ServiceManager:
 
         # Generate service template. Environment=ENV={env} is set so apps
         # reading ENV (and ServiceManager itself if re-entrant) behave
-        # consistently with the main platform unit.
+        # consistently with the main platform unit. PartOf=latarnia-{env}
+        # ensures stopping the main platform also stops its app units.
+        main_unit = f"latarnia-{self.env}.service"
         service_template = f"""[Unit]
 Description=Latarnia Service - {app.manifest.name}
 After=network.target
 Wants=network.target
+PartOf={main_unit}
 
 [Service]
 Type=simple
