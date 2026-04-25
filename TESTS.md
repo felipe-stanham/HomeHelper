@@ -48,7 +48,13 @@ Critical-path tests for Latarnia. Each test is declarative — Claude Code gener
 
 ## Service Management
 
-- **test_service_template_generation:** Create `ServiceManager` with mocked dependencies. Mock `registry.get_app` to return a service app entry at path `/tmp/test-service` with `assigned_port=8100`, `main_file="app.py"`, `restart_policy="always"`, `redis_required=True`, `data_dir=True`, `logs_dir=True`. Call `generate_service_template("test-service")`. -> Returns a string containing `"Description=Latarnia Service - test-service"`, `"ExecStart=python app.py --port 8100"`, `"Restart=always"`, `"Environment=REDIS_HOST=localhost"`.
+- **test_service_template_generation:** Create `ServiceManager` with mocked dependencies. Mock `registry.get_app` to return a service app entry at path `/tmp/test-service` with `assigned_port=8100`, `main_file="app.py"`, `restart_policy="always"`, `redis_required=True`, `data_dir=True`, `logs_dir=True`. Call `generate_service_template("test-service")`. -> Returns a string containing `"Description=Latarnia Service - test-service"`, `"ExecStart={sys.executable} app.py --port 8100"` (absolute venv Python — no bare `python`), `"Restart=always"`, `"Environment=ENV={env}"`, `"Environment=REDIS_HOST=localhost"`, and `"PartOf=latarnia-{env}.service"`.
+
+- **test_service_template_restart_policy_defaults_to_on_failure:** Create `ServiceManager` and a service app entry where `manifest.config.restart_policy` is cleared (simulating a manifest that doesn't set it). Call `generate_service_template`. -> Returns a template containing `"Restart=on-failure"` and `"RestartSec=5"`.
+
+- **test_service_template_never_maps_to_no:** Create a service app entry with `restart_policy="never"`. Call `generate_service_template`. -> Template contains `"Restart=no"` (systemd's spelling — `"never"` is invalid).
+
+- **test_linger_warning_on_startup:** Patch `platform.system()` → `"Linux"` and `ServiceManager.linger_enabled` → `False`. Run the relevant section of the `lifespan` startup. -> A `WARNING` log is emitted that mentions the user and includes the remediation command `loginctl enable-linger {user}`.
 
 - **test_service_template_no_app:** Create `ServiceManager`. Mock `registry.get_app` to return `None`. Call `generate_service_template("nonexistent")`. -> Returns `None`.
 
@@ -59,6 +65,16 @@ Critical-path tests for Latarnia. Each test is declarative — Claude Code gener
 - **test_service_stop_success:** Create `ServiceManager`. Mock `subprocess.run` to return `returncode=0`. Call `stop_service("test-service")`. -> Returns `True`. Verify `subprocess.run` was called with `["systemctl", "--user", "stop", "latarnia-test-service.service"]`.
 
 - **test_service_restart_success:** Create `ServiceManager`. Mock `subprocess.run` to return `returncode=0`. Call `restart_service("test-service")`. -> Returns `True`. Verify `subprocess.run` was called with `["systemctl", "--user", "restart", "latarnia-test-service.service"]`.
+
+## Combined Health (P-0005 cap-005)
+
+- **test_combined_health_stopped_shows_red:** Create `HealthMonitor` with mocked `ServiceManager` (`env="tst"`). Patch `HealthMonitor.get_systemd_states` to return `{"example_full_app": "inactive"}` and set `health_results["example_full_app"]` to a `HealthCheckResult(status=HealthStatus.GOOD)` (stale). Call `get_overall_status("example_full_app")`. -> Returns `{overall_status: "grey", detail: "stopped"}`. Repeat with the systemd state set to `"failed"`. -> Returns `{overall_status: "red", ...}`.
+
+- **test_combined_health_active_but_health_error:** Set `get_systemd_states` → `{"app_a": "active"}` and `health_results["app_a"]` to `HealthCheckResult(status=HealthStatus.ERROR, message="redis down")`. Call `get_overall_status("app_a")`. -> Returns `overall_status == "red"` with the message propagated into `detail`.
+
+- **test_combined_health_active_good_to_green:** Set `get_systemd_states` → `{"app_a": "active"}` and `health_results["app_a"]` to `HealthCheckResult(status=HealthStatus.GOOD)`. Call `get_overall_status("app_a")`. -> Returns `overall_status == "green"`.
+
+- **test_api_apps_returns_overall_status:** Call `GET /api/apps` against a TestClient instance. Mock `health_monitor.get_overall_status("app_x")` to return `{"overall_status": "yellow", "detail": "starting"}`. -> The `apps[0]` payload contains `overall_status == "yellow"` and `overall_status_detail == "starting"`.
 
 ## Web Dashboard
 

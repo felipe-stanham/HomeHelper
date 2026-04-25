@@ -213,16 +213,27 @@
   function statusBadge(status) {
     if (!status) return "<span class='badge bg-secondary'>⚪ Unknown</span>";
     const lower = String(status).toLowerCase();
-    if (lower === "running" || lower === "ready" || lower === "good") {
+    // P-0005 Scope 3: overall_status enum {green, yellow, red, grey}
+    if (lower === "green" || lower === "running" || lower === "ready" || lower === "good") {
       return "<span class='badge bg-success'>✅ Running</span>";
     }
-    if (lower === "warning") {
+    if (lower === "yellow" || lower === "warning") {
       return "<span class='badge bg-warning text-dark'>🟡 Warning</span>";
     }
-    if (lower === "error" || lower === "stopped") {
+    if (lower === "red" || lower === "error") {
       return "<span class='badge bg-danger'>❌ Error</span>";
     }
+    if (lower === "grey" || lower === "stopped") {
+      return "<span class='badge bg-secondary'>⏸ Stopped</span>";
+    }
     return "<span class='badge bg-secondary'>⚪ Unknown</span>";
+  }
+
+  // Prefer the combined systemd+/health value (P-0005 cap-005) when the
+  // backend provides it; fall back to the legacy AppStatus string for a
+  // graceful rollout.
+  function appDisplayStatus(app) {
+    return app.overall_status || app.status;
   }
 
   function buildCapabilityBadges(app) {
@@ -299,7 +310,7 @@
       const col = document.createElement("div");
       col.className = "col-12 col-md-6 col-lg-4";
 
-      const statusHtml = statusBadge(app.status);
+      const statusHtml = statusBadge(appDisplayStatus(app));
 
       col.innerHTML = `
         <div class="card h-100 hh-card">
@@ -326,7 +337,7 @@
       const col = document.createElement("div");
       col.className = "col-12 col-md-6 col-lg-4";
 
-      const statusHtml = statusBadge(app.status);
+      const statusHtml = statusBadge(appDisplayStatus(app));
       const hasLegacyUI = app.manifest?.config?.has_UI || false;
       const hasWebUI = app.manifest?.config?.has_web_ui || false;
 
@@ -440,7 +451,7 @@
         console.log('No process info available:', err);
       }
       
-      const statusBadgeHtml = statusBadge(app.status);
+      const statusBadgeHtml = statusBadge(appDisplayStatus(app));
       const portInfo = app.runtime_info?.assigned_port ? `Port ${app.runtime_info.assigned_port}` : 'No port assigned';
       const serviceStatus = app.runtime_info?.service_status || 'Unknown';
       const uptime = processInfo?.uptime || 'N/A';

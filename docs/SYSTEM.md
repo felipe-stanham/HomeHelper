@@ -34,7 +34,7 @@ Latarnia is a unified home automation platform for Raspberry Pi 5 (8GB RAM) that
 | P-0002  | Latarnia        | [DONE]      | Platform rename + evolved manifests, Postgres, MCP gateway, Redis Streams, web UI proxy |
 | P-0003  | Dynamic MCP Port Allocation | [DONE] | Runtime allocation of MCP ports from configured range |
 | P-0004  | Env-Scoped Services | [DONE]      | Env-scope per-app systemd units + bootstrap docs for main platform units |
-| P-0005  | Activate Systemd Per-App | [ ]         | Route service apps through ServiceManager on Linux; crash recovery via Restart=; combined health signal |
+| P-0005  | Activate Systemd Per-App | [DONE] (Pi/TST regression pending) | LaunchRouter dispatches Linux→ServiceManager, Darwin→SubprocessLauncher; per-app units use venv Python, Restart=on-failure, PartOf=, ENV=; linger warning on startup; `/api/apps` reports combined systemd+`/health` status (green/yellow/red/grey). |
 
 ## Testing Tools
 

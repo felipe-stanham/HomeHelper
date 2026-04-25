@@ -19,7 +19,12 @@ from latarnia.core.config import ConfigManager
 from latarnia.managers.app_manager import AppManager, AppRegistry, AppManifest, AppType, AppStatus, AppRuntimeInfo
 from latarnia.managers.port_manager import PortManager
 from latarnia.managers.service_manager import ServiceManager, ServiceInfo, ServiceStatus, ServiceState
-from latarnia.managers.health_monitor import HealthMonitor, HealthCheckResult, HealthStatus
+from latarnia.managers.health_monitor import (
+    HealthMonitor,
+    HealthCheckResult,
+    HealthStatus,
+    OverallStatus,
+)
 
 
 class TestServiceManager:
@@ -741,6 +746,143 @@ class TestHealthMonitor:
         
         health_monitor._running = True
         assert health_monitor.is_monitoring() is True
+
+
+class TestCombinedHealth:
+    """P-0005 Scope 3: combined systemd + /health status (flow-03)."""
+
+    @pytest.fixture
+    def hm(self, mock_config_manager, mock_app_manager, mock_service_manager):
+        return HealthMonitor(mock_config_manager, mock_app_manager, mock_service_manager)
+
+    @pytest.fixture
+    def mock_config_manager(self):
+        return Mock(spec=ConfigManager)
+
+    @pytest.fixture
+    def mock_app_manager(self):
+        m = Mock(spec=AppManager)
+        m.registry = Mock(spec=AppRegistry)
+        return m
+
+    @pytest.fixture
+    def mock_service_manager(self):
+        m = Mock(spec=ServiceManager)
+        m.env = "dev"
+        return m
+
+    @pytest.mark.parametrize("systemd,health_status,expected", [
+        # Rules from workflows.md flow-03.
+        ("active", HealthStatus.GOOD, OverallStatus.GREEN),
+        ("active", HealthStatus.WARNING, OverallStatus.YELLOW),
+        ("active", HealthStatus.ERROR, OverallStatus.RED),
+        ("active", HealthStatus.UNKNOWN, OverallStatus.YELLOW),
+        ("activating", None, OverallStatus.YELLOW),
+        ("inactive", None, OverallStatus.GREY),
+        ("failed", None, OverallStatus.RED),
+    ])
+    def test_combine_matrix(self, systemd, health_status, expected):
+        if health_status is None:
+            health_result = None
+        else:
+            health_result = HealthCheckResult(
+                app_id="x", status=health_status, message="ok",
+            )
+        overall, _detail = HealthMonitor._combine(systemd, health_result)
+        assert overall == expected
+
+    def test_combine_active_unreachable_yields_yellow(self):
+        """systemd active + /health never probed → yellow 'unreachable'."""
+        overall, detail = HealthMonitor._combine("active", None)
+        assert overall == OverallStatus.YELLOW
+        assert "unreachable" in detail
+
+    def test_combine_none_systemd_no_health_yields_grey(self):
+        """Non-Linux (no systemd) + no health data → grey 'no status'."""
+        overall, _detail = HealthMonitor._combine(None, None)
+        assert overall == OverallStatus.GREY
+
+    def test_parse_systemctl_show_multiple_apps(self):
+        """Parses blank-line-separated blocks into {app_id: ActiveState}."""
+        sample = (
+            "Id=latarnia-dev-app_a.service\n"
+            "ActiveState=active\n"
+            "SubState=running\n"
+            "\n"
+            "Id=latarnia-dev-app_b.service\n"
+            "ActiveState=failed\n"
+            "SubState=failed\n"
+            "\n"
+            "Id=latarnia-dev-app_c.service\n"
+            "ActiveState=inactive\n"
+            "SubState=dead\n"
+        )
+        states = HealthMonitor._parse_systemctl_show(sample, "latarnia-dev-")
+        assert states == {
+            "app_a": "active",
+            "app_b": "failed",
+            "app_c": "inactive",
+        }
+
+    def test_parse_systemctl_show_ignores_non_prefixed_units(self):
+        sample = (
+            "Id=someother.service\n"
+            "ActiveState=active\n"
+            "\n"
+            "Id=latarnia-dev-only_ours.service\n"
+            "ActiveState=active\n"
+        )
+        states = HealthMonitor._parse_systemctl_show(sample, "latarnia-dev-")
+        assert states == {"only_ours": "active"}
+
+    @patch("latarnia.managers.health_monitor.platform.system", return_value="Darwin")
+    def test_get_systemd_states_returns_empty_on_macos(
+        self, mock_system, hm,
+    ):
+        assert hm.get_systemd_states() == {}
+
+    @patch("latarnia.managers.health_monitor.platform.system", return_value="Linux")
+    @patch("latarnia.managers.health_monitor.subprocess.run")
+    def test_get_systemd_states_caches_within_interval(
+        self, mock_run, mock_system, hm,
+    ):
+        """Consecutive calls within the interval hit the cache, not systemctl."""
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = (
+            "Id=latarnia-dev-foo.service\nActiveState=active\n"
+        )
+        hm.config.interval = 30  # seconds
+        first = hm.get_systemd_states()
+        second = hm.get_systemd_states()
+        assert first == second == {"foo": "active"}
+        assert mock_run.call_count == 1
+
+    def test_get_overall_status_end_to_end(self, hm):
+        """End-to-end: combines the cached systemd map with health_results."""
+        # Populate the cache manually to avoid shelling out.
+        hm._systemd_states = {
+            "green_app": "active",
+            "yellow_app": "active",
+            "red_app": "failed",
+            "grey_app": "inactive",
+        }
+        hm._systemd_states_refreshed_at = datetime.now()
+        hm.health_results = {
+            "green_app": HealthCheckResult(
+                app_id="green_app", status=HealthStatus.GOOD, message="all good",
+            ),
+            "yellow_app": HealthCheckResult(
+                app_id="yellow_app", status=HealthStatus.WARNING, message="slow upstream",
+            ),
+        }
+        with patch("latarnia.managers.health_monitor.platform.system", return_value="Linux"):
+            assert hm.get_overall_status("green_app")["overall_status"] == "green"
+            assert hm.get_overall_status("yellow_app")["overall_status"] == "yellow"
+            assert hm.get_overall_status("red_app")["overall_status"] == "red"
+            assert hm.get_overall_status("grey_app")["overall_status"] == "grey"
+            # Detail from HealthCheckResult flows through for active paths.
+            assert "all good" in hm.get_overall_status("green_app")["detail"]
+            assert "slow upstream" in hm.get_overall_status("yellow_app")["detail"]
 
 
 class TestServiceInfo:

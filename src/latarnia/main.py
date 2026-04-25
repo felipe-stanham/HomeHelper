@@ -356,12 +356,19 @@ async def discover_apps():
 
 @app.get("/api/apps")
 async def get_all_apps():
-    """Get all registered applications"""
+    """Get all registered applications with combined systemd+/health status."""
     try:
         apps = app_manager.registry.get_all_apps()
+        payload = []
+        for app_entry in apps:
+            entry = app_entry.to_dict()
+            combined = health_monitor.get_overall_status(app_entry.app_id)
+            entry["overall_status"] = combined["overall_status"]
+            entry["overall_status_detail"] = combined["detail"]
+            payload.append(entry)
         return {
-            "apps": [app.to_dict() for app in apps],
-            "total_count": len(apps)
+            "apps": payload,
+            "total_count": len(payload)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
