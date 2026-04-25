@@ -173,7 +173,7 @@ app_manager = AppManager(
     config_manager, port_manager,
     db_provisioner=db_provisioner, stream_manager=stream_manager,
 )
-service_manager = ServiceManager(config_manager, app_manager)
+service_manager = ServiceManager(config_manager, app_manager, port_manager)
 health_monitor = HealthMonitor(config_manager, app_manager, service_manager)
 subprocess_launcher = SubprocessLauncher(config_manager, app_manager, port_manager)
 streamlit_manager = StreamlitManager(config_manager, app_manager, port_manager)

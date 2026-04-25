@@ -21,6 +21,7 @@ from enum import Enum
 
 from ..core.config import ConfigManager
 from .app_manager import AppManager, AppType, AppStatus
+from .port_manager import PortManager
 
 
 class ServiceStatus(str, Enum):
@@ -82,9 +83,14 @@ class ServiceInfo:
 class ServiceManager:
     """Main service manager for systemd integration"""
     
-    def __init__(self, config_manager: ConfigManager, app_manager: AppManager):
+    def __init__(self, config_manager: ConfigManager, app_manager: AppManager,
+                 port_manager: Optional[PortManager] = None):
         self.config_manager = config_manager
         self.app_manager = app_manager
+        # PortManager is optional for backward compat with older callers/tests;
+        # when present, start_service auto-allocates REST and MCP ports so the
+        # systemd path matches SubprocessLauncher's one-shot contract.
+        self.port_manager = port_manager
         self.logger = logging.getLogger("latarnia.service_manager")
         
         # Service tracking
@@ -302,46 +308,95 @@ Environment=ENV={self.env}
     
     def start_service(self, app_id: str) -> bool:
         """
-        Start a systemd service for an application
-        
+        Start a systemd service for an application end-to-end.
+
+        Allocates ports if needed, writes the unit file (daemon-reload), then
+        runs `systemctl --user start`. Mirrors `SubprocessLauncher.start_service`
+        so call sites can dispatch through `pick_launcher` uniformly.
+
         Args:
             app_id: Application identifier
-            
+
         Returns:
             True if service started successfully
         """
+        service_name = f"{self.service_prefix}{app_id}.service"
+
         try:
-            service_name = f"{self.service_prefix}{app_id}.service"
-            
+            app = self.app_manager.registry.get_app(app_id)
+            if not app:
+                self.logger.error(f"App {app_id} not found")
+                return False
+            if app.type != AppType.SERVICE:
+                self.logger.error(f"App {app_id} is not a service app")
+                return False
+
+            # Allocate ports if PortManager is wired and no port is set yet.
+            allocated_port = False
+            allocated_mcp_port = False
+            if self.port_manager is not None and not app.runtime_info.assigned_port:
+                port = self.port_manager.allocate_port(app_id, app.type)
+                if not port:
+                    self.logger.error(f"Failed to allocate port for app {app_id}")
+                    return False
+                app.runtime_info.assigned_port = port
+                allocated_port = True
+
+                if app.mcp_info and app.mcp_info.enabled and not app.mcp_info.mcp_port:
+                    mcp_port = self.port_manager.allocate_mcp_port(app_id)
+                    if not mcp_port:
+                        self.logger.error(f"Failed to allocate MCP port for app {app_id}")
+                        self.port_manager.release_port(app_id)
+                        app.runtime_info.assigned_port = None
+                        return False
+                    app.mcp_info.mcp_port = mcp_port
+                    allocated_mcp_port = True
+
+            # Ensure the unit file exists and is up-to-date with the current
+            # port assignment. create_service_file calls generate_service_template
+            # and runs daemon-reload.
+            if not self.create_service_file(app_id):
+                if allocated_port and self.port_manager is not None:
+                    self.port_manager.release_port(app_id)
+                    app.runtime_info.assigned_port = None
+                if allocated_mcp_port and self.port_manager is not None:
+                    self.port_manager.release_mcp_port(app_id)
+                    if app.mcp_info:
+                        app.mcp_info.mcp_port = None
+                return False
+
+            # Now actually start the unit.
             result = subprocess.run(
                 ["systemctl", "--user", "start", service_name],
                 capture_output=True,
                 text=True
             )
-            
+
             if result.returncode == 0:
                 self.logger.info(f"Started service for app {app_id}")
-                # Update app status
                 self.app_manager.registry.update_app(app_id, status=AppStatus.RUNNING)
                 return True
-            else:
-                error_msg = f"Failed to start service: {result.stderr}"
-                self.logger.error(f"Failed to start service for app {app_id}: {error_msg}")
-                # Update app with error
-                app = self.app_manager.registry.get_app(app_id)
-                if app:
-                    app.runtime_info.error_message = error_msg
-                    self.app_manager.registry.update_app(
-                        app_id, 
-                        status=AppStatus.ERROR,
-                        runtime_info=app.runtime_info
-                    )
-                return False
-                
+
+            error_msg = f"Failed to start service: {result.stderr}"
+            self.logger.error(f"Failed to start service for app {app_id}: {error_msg}")
+            app.runtime_info.error_message = error_msg
+            self.app_manager.registry.update_app(
+                app_id,
+                status=AppStatus.ERROR,
+                runtime_info=app.runtime_info
+            )
+            if allocated_port and self.port_manager is not None:
+                self.port_manager.release_port(app_id)
+                app.runtime_info.assigned_port = None
+            if allocated_mcp_port and self.port_manager is not None:
+                self.port_manager.release_mcp_port(app_id)
+                if app.mcp_info:
+                    app.mcp_info.mcp_port = None
+            return False
+
         except Exception as e:
             error_msg = f"Exception starting service: {str(e)}"
             self.logger.error(f"Failed to start service for app {app_id}: {error_msg}")
-            # Update app with error
             app = self.app_manager.registry.get_app(app_id)
             if app:
                 app.runtime_info.error_message = error_msg
