@@ -19,9 +19,17 @@ flowchart TD
     RedisOk -- No --> LogWarn[Log error, continue without Redis]
     LogWarn --> Discover
 
-    Discover --> Loop{More apps<br/>to check?}
+    Discover --> LingerCheck{Linux?}
+    LingerCheck -- Yes --> CheckLinger{linger_enabled?}
+    CheckLinger -- No --> WarnLinger[WARNING: linger disabled<br/>sudo loginctl enable-linger]
+    CheckLinger -- Yes --> Loop
+    WarnLinger --> Loop
+    LingerCheck -- No --> Loop
+
+    Loop{More apps<br/>to check?}
     Loop -- Yes --> AutoCheck{Service app with<br/>auto_start = true?}
-    AutoCheck -- Yes --> StartApp[Start app via ProcessManager]
+    AutoCheck -- Yes --> PickLauncher[pick_launcher<br/>os + type → launcher]
+    PickLauncher --> StartApp[launcher.start_service]
     AutoCheck -- No --> Loop
     StartApp --> Loop
     Loop -- No --> StartSub[Start Redis Event Subscriber<br/>psubscribe latarnia:events:*]
@@ -124,6 +132,21 @@ sequenceDiagram
     User->>Dash: Interact with Streamlit iframe
     Dash->>API: POST /api/apps/{id}/streamlit/touch
     Note right of StMgr: TTL timer resets on each touch
+
+    Note over User,StApp: Service App Lifecycle Buttons (start / stop / restart)
+
+    User->>Dash: Click start/stop/restart button on service app card
+    Dash->>API: POST /api/apps/{id}/process/{action}
+    API->>API: pick_launcher(app_entry)<br/>os + type → launcher
+    alt Linux + service
+        API->>API: ServiceManager.start/stop/restart_service
+        Note right of API: systemctl --user {action} latarnia-{env}-{id}.service
+    else Darwin + service
+        API->>API: SubprocessLauncher.start/stop/restart_service
+        Note right of API: Popen / SIGTERM
+    end
+    API-->>Dash: Updated app status
+    Dash-->>User: Refresh card badge
 ```
 
 ## 4. Health Check Monitoring
