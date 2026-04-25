@@ -10,7 +10,9 @@ graph TB
         subgraph "Latarnia Main Application"
             FastAPI[FastAPI Web Server<br/>Port 8000]
             AppMgr[App Manager<br/>Discovery & Registry]
-            SvcMgr[Service Manager<br/>systemd Integration]
+            Router[LaunchRouter<br/>os + type → launcher]
+            SvcMgr[Service Manager<br/>systemd --user]
+            SubLaunch[SubprocessLauncher<br/>macOS fallback]
             UIMgr[UI Manager<br/>Streamlit TTL]
             SysMon[System Monitor<br/>Hardware Metrics]
             MCPGateway[MCP Gateway<br/>/mcp SSE endpoint]
@@ -21,6 +23,11 @@ graph TB
             Redis[(Redis<br/>Port 6379)]
         end
         
+        subgraph "systemd --user (Linux, linger on)"
+            UA[latarnia-{env}-app_a.service]
+            UB[latarnia-{env}-app_b.service]
+        end
+
         subgraph "Applications"
             SvcApp1[Service App 1<br/>Port 8100-8199]
             SvcApp2[Service App 2<br/>Port 8100-8199]
@@ -29,7 +36,6 @@ graph TB
         end
         
         subgraph "System Services"
-            systemd[systemd<br/>Process Management]
             FileSystem[Shared Storage<br/>/opt/latarnia/]
         end
     end
@@ -45,13 +51,21 @@ graph TB
     Browser -->|/apps/...| WebProxy
     MCPClient -->|MCP SSE| MCPGateway
     FastAPI --> AppMgr
-    FastAPI --> SvcMgr
+    FastAPI --> Router
     FastAPI --> UIMgr
     FastAPI --> SysMon
     WebProxy --> AppMgr
     
+    Router -->|Linux + service| SvcMgr
+    Router -->|Darwin + service| SubLaunch
+    Router -->|any + streamlit| UIMgr
+
     AppMgr --> Redis
-    SvcMgr --> systemd
+    SvcMgr -.systemctl --user.-> UA
+    SvcMgr -.systemctl --user.-> UB
+    UA -->|ExecStart venv python| SvcApp1
+    UB -->|ExecStart venv python| SvcApp2
+    SubLaunch -.Popen.-> SvcApp1
     UIMgr --> StreamlitApp1
     UIMgr --> StreamlitApp2
 
@@ -59,9 +73,6 @@ graph TB
     MCPGateway -->|MCP SSE| SvcApp2
     WebProxy -->|HTTP + WebSocket| SvcApp1
     WebProxy -->|HTTP + WebSocket| SvcApp2
-    
-    systemd --> SvcApp1
-    systemd --> SvcApp2
     
     SvcApp1 --> Redis
     SvcApp2 --> Redis
@@ -96,17 +107,35 @@ graph TB
   - Python dependency installation
   - App validation and setup
 
-### 3. Service Manager
-- **Purpose**: Background service lifecycle control
-- **Responsibilities**:
-  - systemd service template generation
-  - Service start/stop/restart operations
-  - Health check polling
-  - Process monitoring and metrics
-  - Error recovery and restart policies
-  - Log access via journalctl
+### 3. Launch Router
+- **Purpose**: Stateless dispatch function (`pick_launcher`) that selects the correct launcher for each app based on `(platform.system(), manifest.type)`
+- **Module**: `latarnia.managers.launcher_router`
+- **Routing rules**:
+  - `streamlit` type → `StreamlitManager`
+  - `service` + Linux → `ServiceManager` (systemctl --user)
+  - `service` + Darwin → `SubprocessLauncher` (Popen fork)
+- **Used by**: lifespan auto-start loop and `/api/apps/{id}/process/{start,stop,restart}` endpoints
 
-### 4. UI Manager
+### 4. Service Manager
+- **Purpose**: systemd --user lifecycle controller for service apps on Linux
+- **Responsibilities**:
+  - Per-app unit file generation (`~/.config/systemd/user/latarnia-{env}-{app}.service`)
+  - `ExecStart` uses absolute venv Python (`sys.executable`); `Environment=ENV={env}` injected
+  - Default `Restart=on-failure` / `RestartSec=5`; overridable via `manifest.config.restart_policy`
+  - `PartOf=latarnia-{env}.service` so stopping the main platform cascades to app units
+  - `linger_enabled()` helper — shells out to `loginctl` on Linux; startup emits `WARNING` if linger is off
+  - Service start/stop/restart operations via `systemctl --user`
+  - Health check polling; log access via journalctl
+
+### 5. Subprocess Launcher
+- **Purpose**: macOS-only fallback launcher; spawns service apps as direct `Popen` children of the platform
+- **Module**: `latarnia.managers.subprocess_launcher` (`SubprocessLauncher`)
+- **Responsibilities**:
+  - `start_service / stop_service / restart_service` (verbs harmonized with `ServiceManager`)
+  - Process tracking by PID; graceful SIGTERM with force-kill fallback
+  - No crash recovery (macOS dev path only — systemd restart policy not available)
+
+### 6. UI Manager
 - **Purpose**: On-demand Streamlit application management
 - **Responsibilities**:
   - Streamlit process spawning
@@ -115,7 +144,7 @@ graph TB
   - Modal integration with main dashboard
   - Resource monitoring and cleanup
 
-### 5. System Monitor
+### 7. System Monitor
 - **Purpose**: Hardware and system metrics collection
 - **Responsibilities**:
   - CPU usage monitoring
@@ -125,7 +154,7 @@ graph TB
   - Process metrics collection
   - Health status determination
 
-### 6. MCP Gateway
+### 8. MCP Gateway
 - **Purpose**: Aggregates MCP tools from all MCP-enabled apps and exposes them to external clients through a single endpoint
 - **Mount path**: `/mcp` (configurable via `MCPConfig.gateway_path`)
 - **Transport**: SSE (`mcp.server.sse.SseServerTransport`) — gateway acts as MCP server to clients and MCP client to apps
@@ -138,7 +167,7 @@ graph TB
   - Enforce backward compatibility on version bumps (set-difference check; reject and stop app on violation)
   - Expose `GET /api/mcp/status` and `GET /api/mcp/tools` REST endpoints
 
-### 7. Redis Message Bus
+### 9. Redis Message Bus
 - **Purpose**: Inter-app communication and event system
 - **Responsibilities**:
   - Pub/Sub messaging between apps
@@ -147,7 +176,7 @@ graph TB
   - Configuration change notifications
   - App status updates
 
-### 8. Web Proxy
+### 10. Web Proxy
 - **Purpose**: Reverse proxy that exposes app-owned web UIs through the platform
 - **Routes**: `GET|POST|... /apps/{app_name}/{path}` (HTTP), `WS /apps/{app_name}/{path}` (WebSocket)
 - **Redirect**: Bare `/apps/{app_name}` issues a 307 to `/apps/{app_name}/`
@@ -268,26 +297,46 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant UI as Web Dashboard
-    participant SM as Service Manager
-    participant systemd as systemd
+    participant API as FastAPI
+    participant Router as LaunchRouter
+    participant SM as ServiceManager
+    participant Sub as SubprocessLauncher
+    participant systemd as systemd --user
     participant App as Service App
     participant Redis as Redis
-    
-    UI->>SM: Start app request
-    SM->>systemd: Generate service file
-    SM->>systemd: systemctl start app
-    systemd->>App: Launch process
+
+    UI->>API: POST /api/apps/{id}/process/start
+    API->>Router: pick_launcher(app_entry)
+    alt Linux + service type
+        Router-->>API: ServiceManager
+        API->>SM: start_service(app_id)
+        SM->>systemd: generate unit file
+        SM->>systemd: systemctl --user start
+        systemd->>App: ExecStart (venv python)
+    else Darwin + service type
+        Router-->>API: SubprocessLauncher
+        API->>Sub: start_service(app_id)
+        Sub->>App: Popen(main_file)
+    end
     App->>Redis: Publish app_started event
-    App->>SM: Health check response
-    SM->>UI: Return app status
-    
+    API-->>UI: Return app status
+
     Note over App: App runs continuously
-    
-    UI->>SM: Stop app request
-    SM->>systemd: systemctl stop app
-    systemd->>App: Terminate process
+
+    UI->>API: POST /api/apps/{id}/process/stop
+    API->>Router: pick_launcher(app_entry)
+    alt Linux
+        Router-->>API: ServiceManager
+        API->>SM: stop_service(app_id)
+        SM->>systemd: systemctl --user stop
+        systemd->>App: Terminate process
+    else Darwin
+        Router-->>API: SubprocessLauncher
+        API->>Sub: stop_service(app_id)
+        Sub->>App: SIGTERM / force kill
+    end
     App->>Redis: Publish app_stopped event
-    SM->>UI: Return app status
+    API-->>UI: Return app status
 ```
 
 ### Streamlit App Lifecycle
@@ -388,6 +437,14 @@ raspberrypi.local:8000 (Main Dashboard + API + MCP Gateway at /mcp)
 ├── Internal:9001-9099 (Service App MCP servers, declared in manifest)
 ├── Internal:8501+     (Streamlit Apps)
 └── Internal:6379      (Redis)
+
+systemd --user units (per-app, generated at runtime):
+~/.config/systemd/user/
+├── latarnia-tst-{app}.service   (TST env apps)
+└── latarnia-prd-{app}.service   (PRD env apps)
+Each unit: ExecStart=<venv>/bin/python, Restart=on-failure, RestartSec=5
+           Environment=ENV={env}, PartOf=latarnia-{env}.service
+Prerequisite: sudo loginctl enable-linger {user}
 ```
 
 ### File System Layout

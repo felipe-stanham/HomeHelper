@@ -34,6 +34,7 @@ Latarnia is a unified home automation platform for Raspberry Pi 5 (8GB RAM) that
 | P-0002  | Latarnia        | [DONE]      | Platform rename + evolved manifests, Postgres, MCP gateway, Redis Streams, web UI proxy |
 | P-0003  | Dynamic MCP Port Allocation | [DONE] | Runtime allocation of MCP ports from configured range |
 | P-0004  | Env-Scoped Services | [DONE]      | Env-scope per-app systemd units + bootstrap docs for main platform units |
+| P-0005  | Activate Systemd Per-App | [DONE] (Pi/TST regression pending) | LaunchRouter dispatches Linux→ServiceManager, Darwin→SubprocessLauncher; per-app units use venv Python, Restart=on-failure, PartOf=, ENV=; linger warning on startup; `/api/apps` reports combined systemd+`/health` status (green/yellow/red/grey). |
 
 ## Testing Tools
 
@@ -57,41 +58,51 @@ cp -r examples/example_full_app apps/
 cp -r examples/example_companion apps/
 ```
 
-## Deployment
+## Deployment Targets
+| Target      | Environments | Description                        |
+|-------------|--------------|------------------------------------|
+| local       | dev          | Developer workstation (macOS)      |
+| homeserver  | dev, tst, prd| Raspberry Pi 5 — self-hosted multi-environment |
 
-### Procedure
-1. Run regression tests (`TESTS.md`) — all must pass
-2. Read `.deploy-secrets` for the target
-3. SSH to the target, `git pull` the correct branch
-4. **DEV/TST only:** Copy example apps to `apps/`:
-   ```
-   cp -r examples/example_full_app apps/
-   cp -r examples/example_companion apps/
-   ```
-   PRD does **not** deploy example apps — only real apps live in PRD `apps/`.
-5. Restart the service
-6. Run smoke tests against the deployed instance
-7. Log the deployment in `DEPLOYMENTS.md`
+## Direction of Travel — Future V2 (candidate P-0006, not scheduled)
 
-### Targets
-| Target      | Environments | Host             | Description                        |
-|-------------|--------------|------------------|------------------------------------|
-| local       | dev          | localhost        | Developer workstation (macOS)      |
-| homeserver  | tst, prd     | 192.168.68.100   | Raspberry Pi 5 (8GB) — self-hosted multi-environment |
+**Premise (recorded 2026-04-24):** Latarnia currently re-implements several patterns that mature tools already provide — process supervision, log aggregation, reverse proxying, health polling. At today's scale (1–2 apps) this is harmless. At 10+ apps the duplication starts to sting. P-0005 activates systemd per-app as an incremental step in the right direction. A potential V2 goes further: **thin the platform down to the parts that are actually Latarnia-specific** (MCP gateway, manifest-driven provisioning, Redis Streams coordination), and delegate the rest (lifecycle → systemd, logs → journald, reverse proxy → nginx/Caddy).
 
-### Environment Isolation (homeserver)
+This section captures the V2 framing so it survives across sessions. Do **not** schedule V2 work until P-0005 has landed and been lived with for a while.
 
-Single Raspberry Pi runs both TST and PRD side-by-side, isolated by:
+### What a V2 would change — and what it wouldn't
 
-| Resource         | TST                        | PRD                        |
-|------------------|----------------------------|----------------------------|
-| Deploy path      | `/opt/latarnia/tst`        | `/opt/latarnia/prd`        |
-| Git branch       | `tst`                      | `main`                     |
-| Main app port    | 8000                       | 8080                       |
-| Service app ports| 8100-8149                  | 8150-8199                  |
-| Streamlit port   | 8501                       | 8551                       |
-| DB prefix        | `tst_latarnia_`            | `prd_latarnia_`            |
-| Redis DB         | 0                          | 1                          |
-| Logs             | `/opt/latarnia/tst/logs`   | `/opt/latarnia/prd/logs`   |
-| Data             | `/opt/latarnia/tst/data`   | `/opt/latarnia/prd/data`   |
-| Update method    | `git pull` on tst branch   | `git pull` on main branch  |
+| Question | P-0005 answer (systemd per-app only) | Candidate V2 answer (full restructure) |
+|---|---|---|
+| **1. nginx required?** | No. Keep `web_proxy.py`. | Yes — Caddy (preferred for auto-TLS) or nginx. Platform writes per-app site configs from the manifest and reloads the proxy on app registration. Caddy simpler for a single-host home setup. |
+| **2. Dashboard — what changes?** | User-facing: nothing. Card layout, badges, Web UI modal, start/stop buttons identical. Only the backend status query source changes. | User-facing: still the same dashboard with the same cards and modals. Backend: dashboard becomes a thin view over `systemctl` state + app `/health` + manifest metadata. Less Python code in the dashboard service, more of it is display of external state. Web UI modal still proxies via Caddy to the app's port. |
+| **3. Health — app vs systemd** | Two signals merged: systemd `is-active` (process alive) + app `/health` (working correctly). Combination rules in `P-0005/workflows.md#flow-03`. Apps keep their existing `/health` contract. | Same model. Apps continue to own their `/health` endpoint — only the app knows about upstream failures, degraded mode, etc. systemd tells the platform "process alive"; `/health` tells the platform "app working". The platform merges. V2 doesn't change this contract. |
+| **4. Impact on already-developed apps** | Minimal to zero. Same CLI flags, same `/health`, same manifest, same SIGTERM handling. | Still minimal. The manifest may gain optional fields (e.g., declarative proxy routes, static asset paths, resource limits) but existing fields keep working. The big win is apps stop needing to worry about how they're launched or where their logs go. |
+| **5. Streamlit apps** | Stay on subprocess (TTL lifecycle doesn't match systemd services). | Stay on subprocess, possibly via transient `systemd-run --user --unit=... --timer` for nicer ops parity, but this is optional. Streamlit's on-demand model is fundamentally different and shouldn't be forced into the long-running-service mold. |
+
+### What V2 would actually replace
+
+- **Supervision:** `health_monitor.py`'s restart logic (currently absent or ad-hoc) → `Restart=on-failure` in systemd units. Already delivered by P-0005.
+- **Logging:** per-app file logging in `logs/{app}/` → journald (queryable with `journalctl -u latarnia-{env}-{app}`). Largely delivered by P-0005.
+- **Reverse proxy:** `web_proxy.py` (custom async HTTP proxy with forwarded-headers logic) → Caddy site config per app, generated from the manifest. Deleted code: `web_proxy.py`, related tests, the `_build_forwarded_headers` helper.
+- **Two launcher paths:** the `ServiceManager` + `SubprocessLauncher` split remains (macOS dev still needs a fallback), but `/api/apps/{id}/process/*` can be fully deprecated in favor of `/api/services/{id}/*`.
+- **Parallel REST APIs:** collapse `/api/apps/{id}/process/*` and `/api/services/{id}/*` into one canonical lifecycle API.
+
+### What V2 would NOT change
+
+- The MCP gateway (`mcp_gateway.py`). Still aggregates per-app MCP servers into one SSE endpoint. This is the genuinely novel part of Latarnia and the main reason the platform exists.
+- Manifest-driven provisioning: `db_provisioner.py`, Redis Streams registration (`stream_manager.py`), port allocation (`port_manager.py`). These are Latarnia-specific and stay.
+- The dashboard UI itself. Backend wiring thins; the visible product does not.
+- Auto-discovery via `latarnia.json`. The whole drop-a-folder developer experience stays.
+
+### Signals that would trigger scheduling V2
+
+Any one of these is enough to justify opening a P-0006 spec:
+
+- You want TLS on the dashboard or any app UI (then: Caddy is the cheapest way).
+- You need routing rules (path rewrites, auth headers, rate limits) that the Python proxy doesn't cleanly support.
+- You hit 15+ apps and the platform's own Python process starts showing load from proxying.
+- You want apps to survive a platform restart (a case for dropping `PartOf=` and managing apps fully independently).
+- A second host appears and you need cross-host routing.
+
+If none of those are true a year from now, V2 probably isn't worth it. Leave this section as a record of the thinking and move on.

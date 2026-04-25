@@ -19,7 +19,12 @@ from latarnia.core.config import ConfigManager
 from latarnia.managers.app_manager import AppManager, AppRegistry, AppManifest, AppType, AppStatus, AppRuntimeInfo
 from latarnia.managers.port_manager import PortManager
 from latarnia.managers.service_manager import ServiceManager, ServiceInfo, ServiceStatus, ServiceState
-from latarnia.managers.health_monitor import HealthMonitor, HealthCheckResult, HealthStatus
+from latarnia.managers.health_monitor import (
+    HealthMonitor,
+    HealthCheckResult,
+    HealthStatus,
+    OverallStatus,
+)
 
 
 class TestServiceManager:
@@ -161,18 +166,95 @@ class TestServiceManager:
         """Test systemd service template generation"""
         # Setup mock
         mock_app_manager.registry.get_app.return_value = sample_service_app
-        
+
         # Generate template
         template = service_manager.generate_service_template("test-service")
-        
+
         assert template is not None
         assert "Description=Latarnia Service - test-service" in template
-        assert "ExecStart=python app.py --port 8100" in template
+        # ExecStart must use the absolute venv Python (sys.executable), not bare `python`.
+        assert f"ExecStart={service_manager.python_executable} app.py --port 8100" in template
+        # Sample app explicitly sets restart_policy="always".
         assert "Restart=always" in template
+        assert "Environment=ENV=dev" in template
         assert "Environment=REDIS_HOST=localhost" in template
         assert "Environment=REDIS_PORT=6379" in template
         assert "--data-dir" in template
         assert "--logs-dir" in template
+
+    def test_generate_service_template_uses_sys_executable(
+        self, service_manager, mock_app_manager, sample_service_app, monkeypatch,
+    ):
+        """ExecStart resolves to the platform venv Python (absolute path)."""
+        fake_python = "/opt/latarnia/tst/.venv/bin/python"
+        service_manager.python_executable = fake_python
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        template = service_manager.generate_service_template("test-service")
+
+        assert template is not None
+        # Absolute path appears verbatim, no bare `python` token.
+        assert f"ExecStart={fake_python} app.py --port 8100" in template
+        # Make sure no "ExecStart=python " (bare) leaked through.
+        for line in template.splitlines():
+            if line.startswith("ExecStart="):
+                assert not line.startswith("ExecStart=python "), line
+
+    @pytest.mark.parametrize("env_value,expected", [
+        ("dev", "Environment=ENV=dev"),
+        ("tst", "Environment=ENV=tst"),
+        ("prd", "Environment=ENV=prd"),
+        ("staging", "Environment=ENV=dev"),  # falls back to dev
+    ])
+    def test_generate_service_template_environment_env(
+        self, mock_config_manager, mock_app_manager, temp_dirs, monkeypatch,
+        sample_service_app, env_value, expected,
+    ):
+        """Generated unit declares Environment=ENV={env}, matching ServiceManager.env."""
+        monkeypatch.setenv("ENV", env_value)
+        with patch.object(Path, 'home', return_value=temp_dirs['base']):
+            manager = ServiceManager(mock_config_manager, mock_app_manager)
+        manager.systemd_user_dir = temp_dirs['systemd']
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        template = manager.generate_service_template("test-service")
+
+        assert template is not None
+        assert expected in template
+
+    def test_generate_service_template_partof_main_unit(
+        self, service_manager, mock_app_manager, sample_service_app,
+    ):
+        """Per-app units carry PartOf=latarnia-{env}.service so a main-platform
+        stop also stops the app units (P-0005 spec, lifecycle coupling)."""
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+        template = service_manager.generate_service_template("test-service")
+        assert template is not None
+        assert "PartOf=latarnia-dev.service" in template
+
+    @pytest.mark.parametrize("policy,expected_line", [
+        (None, "Restart=on-failure"),         # manifest default → on-failure
+        ("on-failure", "Restart=on-failure"),
+        ("always", "Restart=always"),
+        ("never", "Restart=no"),               # systemd uses "no", not "never"
+    ])
+    def test_generate_service_template_restart_policy(
+        self, service_manager, mock_app_manager, sample_service_app,
+        policy, expected_line,
+    ):
+        """Default restart policy is on-failure; manifest may override."""
+        if policy is None:
+            # Simulate a manifest that does not set restart_policy by clearing it.
+            sample_service_app.manifest.config.restart_policy = None
+        else:
+            sample_service_app.manifest.config.restart_policy = policy
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        template = service_manager.generate_service_template("test-service")
+
+        assert template is not None
+        assert expected_line in template
+        assert "RestartSec=5" in template
     
     def test_generate_service_template_no_app(self, service_manager, mock_app_manager):
         """Test service template generation for non-existent app"""
@@ -228,9 +310,9 @@ class TestServiceManager:
         mock_app_manager.registry.get_app.return_value = sample_service_app
         mock_subprocess.return_value.returncode = 0
         mock_subprocess.return_value.stderr = ""
-        
+
         result = service_manager.start_service("test-service")
-        
+
         assert result is True
         mock_subprocess.assert_called_with(
             ["systemctl", "--user", "start", "latarnia-dev-test-service.service"],
@@ -238,6 +320,37 @@ class TestServiceManager:
             text=True
         )
         mock_app_manager.registry.update_app.assert_called_with("test-service", status=AppStatus.RUNNING)
+
+    @patch('subprocess.run')
+    def test_start_service_end_to_end(
+        self, mock_subprocess, service_manager, mock_app_manager, sample_service_app,
+    ):
+        """End-to-end: create_service_file → daemon-reload → start.
+
+        Verifies the systemd path that the platform now exercises on Linux:
+        a unit file is written, daemon-reload is invoked, then `systemctl
+        --user start latarnia-{env}-{app}.service` runs. All subprocess calls
+        are mocked.
+        """
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+        mock_subprocess.return_value.returncode = 0
+        mock_subprocess.return_value.stderr = ""
+
+        # Create then start in the same flow that the auto_start path uses.
+        assert service_manager.create_service_file("test-service") is True
+        unit_path = service_manager.systemd_user_dir / "latarnia-dev-test-service.service"
+        assert unit_path.exists()
+        contents = unit_path.read_text()
+        assert "Environment=ENV=dev" in contents
+        # ExecStart must use the absolute venv Python path.
+        assert f"ExecStart={service_manager.python_executable} app.py" in contents
+
+        assert service_manager.start_service("test-service") is True
+        mock_subprocess.assert_called_with(
+            ["systemctl", "--user", "start", "latarnia-dev-test-service.service"],
+            capture_output=True,
+            text=True,
+        )
     
     @patch('subprocess.run')
     def test_start_service_failure(self, mock_subprocess, service_manager, mock_app_manager, sample_service_app):
@@ -353,6 +466,47 @@ class TestServiceManager:
             text=True
         )
     
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Linux")
+    @patch("latarnia.managers.service_manager.subprocess.run")
+    def test_linger_enabled_yes(self, mock_run, mock_system, service_manager):
+        """loginctl reports Linger=yes → linger_enabled() returns True."""
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "Linger=yes\n"
+        assert service_manager.linger_enabled("felipe") is True
+        mock_run.assert_called_with(
+            ["loginctl", "show-user", "felipe", "--property=Linger"],
+            capture_output=True,
+            text=True,
+        )
+
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Linux")
+    @patch("latarnia.managers.service_manager.subprocess.run")
+    def test_linger_enabled_no(self, mock_run, mock_system, service_manager):
+        """loginctl reports Linger=no → linger_enabled() returns False."""
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "Linger=no\n"
+        assert service_manager.linger_enabled("felipe") is False
+
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Darwin")
+    @patch("latarnia.managers.service_manager.subprocess.run")
+    def test_linger_enabled_skipped_on_non_linux(
+        self, mock_run, mock_system, service_manager,
+    ):
+        """On non-Linux hosts, linger_enabled returns True without shelling out."""
+        assert service_manager.linger_enabled("anyone") is True
+        mock_run.assert_not_called()
+
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Linux")
+    @patch(
+        "latarnia.managers.service_manager.subprocess.run",
+        side_effect=FileNotFoundError(),
+    )
+    def test_linger_enabled_loginctl_missing(
+        self, mock_run, mock_system, service_manager,
+    ):
+        """If loginctl is unavailable, treat as enabled (avoid false alarms)."""
+        assert service_manager.linger_enabled("felipe") is True
+
     def test_get_service_statistics(self, service_manager):
         """Test getting service statistics"""
         # Mock some service statuses
@@ -592,6 +746,143 @@ class TestHealthMonitor:
         
         health_monitor._running = True
         assert health_monitor.is_monitoring() is True
+
+
+class TestCombinedHealth:
+    """P-0005 Scope 3: combined systemd + /health status (flow-03)."""
+
+    @pytest.fixture
+    def hm(self, mock_config_manager, mock_app_manager, mock_service_manager):
+        return HealthMonitor(mock_config_manager, mock_app_manager, mock_service_manager)
+
+    @pytest.fixture
+    def mock_config_manager(self):
+        return Mock(spec=ConfigManager)
+
+    @pytest.fixture
+    def mock_app_manager(self):
+        m = Mock(spec=AppManager)
+        m.registry = Mock(spec=AppRegistry)
+        return m
+
+    @pytest.fixture
+    def mock_service_manager(self):
+        m = Mock(spec=ServiceManager)
+        m.env = "dev"
+        return m
+
+    @pytest.mark.parametrize("systemd,health_status,expected", [
+        # Rules from workflows.md flow-03.
+        ("active", HealthStatus.GOOD, OverallStatus.GREEN),
+        ("active", HealthStatus.WARNING, OverallStatus.YELLOW),
+        ("active", HealthStatus.ERROR, OverallStatus.RED),
+        ("active", HealthStatus.UNKNOWN, OverallStatus.YELLOW),
+        ("activating", None, OverallStatus.YELLOW),
+        ("inactive", None, OverallStatus.GREY),
+        ("failed", None, OverallStatus.RED),
+    ])
+    def test_combine_matrix(self, systemd, health_status, expected):
+        if health_status is None:
+            health_result = None
+        else:
+            health_result = HealthCheckResult(
+                app_id="x", status=health_status, message="ok",
+            )
+        overall, _detail = HealthMonitor._combine(systemd, health_result)
+        assert overall == expected
+
+    def test_combine_active_unreachable_yields_yellow(self):
+        """systemd active + /health never probed → yellow 'unreachable'."""
+        overall, detail = HealthMonitor._combine("active", None)
+        assert overall == OverallStatus.YELLOW
+        assert "unreachable" in detail
+
+    def test_combine_none_systemd_no_health_yields_grey(self):
+        """Non-Linux (no systemd) + no health data → grey 'no status'."""
+        overall, _detail = HealthMonitor._combine(None, None)
+        assert overall == OverallStatus.GREY
+
+    def test_parse_systemctl_show_multiple_apps(self):
+        """Parses blank-line-separated blocks into {app_id: ActiveState}."""
+        sample = (
+            "Id=latarnia-dev-app_a.service\n"
+            "ActiveState=active\n"
+            "SubState=running\n"
+            "\n"
+            "Id=latarnia-dev-app_b.service\n"
+            "ActiveState=failed\n"
+            "SubState=failed\n"
+            "\n"
+            "Id=latarnia-dev-app_c.service\n"
+            "ActiveState=inactive\n"
+            "SubState=dead\n"
+        )
+        states = HealthMonitor._parse_systemctl_show(sample, "latarnia-dev-")
+        assert states == {
+            "app_a": "active",
+            "app_b": "failed",
+            "app_c": "inactive",
+        }
+
+    def test_parse_systemctl_show_ignores_non_prefixed_units(self):
+        sample = (
+            "Id=someother.service\n"
+            "ActiveState=active\n"
+            "\n"
+            "Id=latarnia-dev-only_ours.service\n"
+            "ActiveState=active\n"
+        )
+        states = HealthMonitor._parse_systemctl_show(sample, "latarnia-dev-")
+        assert states == {"only_ours": "active"}
+
+    @patch("latarnia.managers.health_monitor.platform.system", return_value="Darwin")
+    def test_get_systemd_states_returns_empty_on_macos(
+        self, mock_system, hm,
+    ):
+        assert hm.get_systemd_states() == {}
+
+    @patch("latarnia.managers.health_monitor.platform.system", return_value="Linux")
+    @patch("latarnia.managers.health_monitor.subprocess.run")
+    def test_get_systemd_states_caches_within_interval(
+        self, mock_run, mock_system, hm,
+    ):
+        """Consecutive calls within the interval hit the cache, not systemctl."""
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = (
+            "Id=latarnia-dev-foo.service\nActiveState=active\n"
+        )
+        hm.config.interval = 30  # seconds
+        first = hm.get_systemd_states()
+        second = hm.get_systemd_states()
+        assert first == second == {"foo": "active"}
+        assert mock_run.call_count == 1
+
+    def test_get_overall_status_end_to_end(self, hm):
+        """End-to-end: combines the cached systemd map with health_results."""
+        # Populate the cache manually to avoid shelling out.
+        hm._systemd_states = {
+            "green_app": "active",
+            "yellow_app": "active",
+            "red_app": "failed",
+            "grey_app": "inactive",
+        }
+        hm._systemd_states_refreshed_at = datetime.now()
+        hm.health_results = {
+            "green_app": HealthCheckResult(
+                app_id="green_app", status=HealthStatus.GOOD, message="all good",
+            ),
+            "yellow_app": HealthCheckResult(
+                app_id="yellow_app", status=HealthStatus.WARNING, message="slow upstream",
+            ),
+        }
+        with patch("latarnia.managers.health_monitor.platform.system", return_value="Linux"):
+            assert hm.get_overall_status("green_app")["overall_status"] == "green"
+            assert hm.get_overall_status("yellow_app")["overall_status"] == "yellow"
+            assert hm.get_overall_status("red_app")["overall_status"] == "red"
+            assert hm.get_overall_status("grey_app")["overall_status"] == "grey"
+            # Detail from HealthCheckResult flows through for active paths.
+            assert "all good" in hm.get_overall_status("green_app")["detail"]
+            assert "slow upstream" in hm.get_overall_status("yellow_app")["detail"]
 
 
 class TestServiceInfo:

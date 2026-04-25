@@ -5,10 +5,13 @@ Handles systemd service integration, lifecycle management, and health monitoring
 Provides systemd service template generation and process monitoring capabilities.
 """
 
+import getpass
 import json
 import logging
 import os
+import platform
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -102,7 +105,53 @@ class ServiceManager:
             env = "dev"
         self.env = env
         self.service_prefix = f"latarnia-{env}-"
-    
+
+        # Absolute path to the platform's venv Python. Generated unit files
+        # use this for ExecStart so systemd does not depend on PATH.
+        self.python_executable = sys.executable
+
+    def linger_enabled(self, user: Optional[str] = None) -> bool:
+        """
+        Check whether systemd --user linger is enabled for the given user.
+
+        Linger keeps the user systemd instance running outside an active login
+        session — required for per-app user units to start at platform boot.
+        On non-Linux hosts, returns True (no-op; no systemd to gate on).
+
+        Args:
+            user: Username to check. Defaults to the current user.
+
+        Returns:
+            True if linger is enabled, False if disabled, True if undetectable
+            (treat as enabled to avoid false positives on non-Linux).
+        """
+        if platform.system() != "Linux":
+            return True
+
+        target_user = user or getpass.getuser()
+        try:
+            result = subprocess.run(
+                ["loginctl", "show-user", target_user, "--property=Linger"],
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            self.logger.debug("loginctl not available; skipping linger check")
+            return True
+
+        if result.returncode != 0:
+            self.logger.debug(
+                "loginctl returned %d for user %s; assuming linger enabled",
+                result.returncode,
+                target_user,
+            )
+            return True
+
+        for line in result.stdout.strip().splitlines():
+            if line.startswith("Linger="):
+                return line.split("=", 1)[1].strip().lower() == "yes"
+        return True
+
     def generate_service_template(self, app_id: str) -> Optional[str]:
         """
         Generate systemd service template for an application
@@ -122,9 +171,10 @@ class ServiceManager:
             self.logger.error(f"App {app_id} has no assigned port")
             return None
         
-        # Build command arguments
+        # Build command arguments. ExecStart uses the absolute path to the
+        # platform's venv Python so systemd does not need PATH set.
         cmd_args = [
-            "python", app.manifest.main_file,
+            self.python_executable, app.manifest.main_file,
             "--port", str(app.runtime_info.assigned_port)
         ]
 
@@ -167,16 +217,26 @@ class ServiceManager:
             for key, value in app.manifest.environment.items():
                 env_vars.append(f"{key}={value}")
         
-        # Restart policy
-        restart_policy = "always"
+        # Restart policy: default is on-failure (matches systemd best practice
+        # for supervised long-running services). Manifest may override per-app.
+        # Map "never" → systemd's "no" since systemd does not accept "never".
+        manifest_policy = None
         if app.manifest.config and app.manifest.config.restart_policy:
-            restart_policy = app.manifest.config.restart_policy
-        
-        # Generate service template
+            manifest_policy = app.manifest.config.restart_policy
+        restart_policy = manifest_policy or "on-failure"
+        if restart_policy == "never":
+            restart_policy = "no"
+
+        # Generate service template. Environment=ENV={env} is set so apps
+        # reading ENV (and ServiceManager itself if re-entrant) behave
+        # consistently with the main platform unit. PartOf=latarnia-{env}
+        # ensures stopping the main platform also stops its app units.
+        main_unit = f"latarnia-{self.env}.service"
         service_template = f"""[Unit]
 Description=Latarnia Service - {app.manifest.name}
 After=network.target
 Wants=network.target
+PartOf={main_unit}
 
 [Service]
 Type=simple
@@ -188,15 +248,16 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier={self.service_prefix}{app_id}
+Environment=ENV={self.env}
 """
-        
+
         # Add environment variables
         if env_vars:
             for env_var in env_vars:
                 service_template += f"Environment={env_var}\n"
-        
+
         service_template += "\n[Install]\nWantedBy=default.target\n"
-        
+
         return service_template
     
     def create_service_file(self, app_id: str) -> bool:
