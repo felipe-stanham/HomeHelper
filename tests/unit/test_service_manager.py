@@ -161,18 +161,85 @@ class TestServiceManager:
         """Test systemd service template generation"""
         # Setup mock
         mock_app_manager.registry.get_app.return_value = sample_service_app
-        
+
         # Generate template
         template = service_manager.generate_service_template("test-service")
-        
+
         assert template is not None
         assert "Description=Latarnia Service - test-service" in template
-        assert "ExecStart=python app.py --port 8100" in template
+        # ExecStart must use the absolute venv Python (sys.executable), not bare `python`.
+        assert f"ExecStart={service_manager.python_executable} app.py --port 8100" in template
+        # Sample app explicitly sets restart_policy="always".
         assert "Restart=always" in template
+        assert "Environment=ENV=dev" in template
         assert "Environment=REDIS_HOST=localhost" in template
         assert "Environment=REDIS_PORT=6379" in template
         assert "--data-dir" in template
         assert "--logs-dir" in template
+
+    def test_generate_service_template_uses_sys_executable(
+        self, service_manager, mock_app_manager, sample_service_app, monkeypatch,
+    ):
+        """ExecStart resolves to the platform venv Python (absolute path)."""
+        fake_python = "/opt/latarnia/tst/.venv/bin/python"
+        service_manager.python_executable = fake_python
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        template = service_manager.generate_service_template("test-service")
+
+        assert template is not None
+        # Absolute path appears verbatim, no bare `python` token.
+        assert f"ExecStart={fake_python} app.py --port 8100" in template
+        # Make sure no "ExecStart=python " (bare) leaked through.
+        for line in template.splitlines():
+            if line.startswith("ExecStart="):
+                assert not line.startswith("ExecStart=python "), line
+
+    @pytest.mark.parametrize("env_value,expected", [
+        ("dev", "Environment=ENV=dev"),
+        ("tst", "Environment=ENV=tst"),
+        ("prd", "Environment=ENV=prd"),
+        ("staging", "Environment=ENV=dev"),  # falls back to dev
+    ])
+    def test_generate_service_template_environment_env(
+        self, mock_config_manager, mock_app_manager, temp_dirs, monkeypatch,
+        sample_service_app, env_value, expected,
+    ):
+        """Generated unit declares Environment=ENV={env}, matching ServiceManager.env."""
+        monkeypatch.setenv("ENV", env_value)
+        with patch.object(Path, 'home', return_value=temp_dirs['base']):
+            manager = ServiceManager(mock_config_manager, mock_app_manager)
+        manager.systemd_user_dir = temp_dirs['systemd']
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        template = manager.generate_service_template("test-service")
+
+        assert template is not None
+        assert expected in template
+
+    @pytest.mark.parametrize("policy,expected_line", [
+        (None, "Restart=on-failure"),         # manifest default → on-failure
+        ("on-failure", "Restart=on-failure"),
+        ("always", "Restart=always"),
+        ("never", "Restart=no"),               # systemd uses "no", not "never"
+    ])
+    def test_generate_service_template_restart_policy(
+        self, service_manager, mock_app_manager, sample_service_app,
+        policy, expected_line,
+    ):
+        """Default restart policy is on-failure; manifest may override."""
+        if policy is None:
+            # Simulate a manifest that does not set restart_policy by clearing it.
+            sample_service_app.manifest.config.restart_policy = None
+        else:
+            sample_service_app.manifest.config.restart_policy = policy
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        template = service_manager.generate_service_template("test-service")
+
+        assert template is not None
+        assert expected_line in template
+        assert "RestartSec=5" in template
     
     def test_generate_service_template_no_app(self, service_manager, mock_app_manager):
         """Test service template generation for non-existent app"""
@@ -353,6 +420,47 @@ class TestServiceManager:
             text=True
         )
     
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Linux")
+    @patch("latarnia.managers.service_manager.subprocess.run")
+    def test_linger_enabled_yes(self, mock_run, mock_system, service_manager):
+        """loginctl reports Linger=yes → linger_enabled() returns True."""
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "Linger=yes\n"
+        assert service_manager.linger_enabled("felipe") is True
+        mock_run.assert_called_with(
+            ["loginctl", "show-user", "felipe", "--property=Linger"],
+            capture_output=True,
+            text=True,
+        )
+
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Linux")
+    @patch("latarnia.managers.service_manager.subprocess.run")
+    def test_linger_enabled_no(self, mock_run, mock_system, service_manager):
+        """loginctl reports Linger=no → linger_enabled() returns False."""
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "Linger=no\n"
+        assert service_manager.linger_enabled("felipe") is False
+
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Darwin")
+    @patch("latarnia.managers.service_manager.subprocess.run")
+    def test_linger_enabled_skipped_on_non_linux(
+        self, mock_run, mock_system, service_manager,
+    ):
+        """On non-Linux hosts, linger_enabled returns True without shelling out."""
+        assert service_manager.linger_enabled("anyone") is True
+        mock_run.assert_not_called()
+
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Linux")
+    @patch(
+        "latarnia.managers.service_manager.subprocess.run",
+        side_effect=FileNotFoundError(),
+    )
+    def test_linger_enabled_loginctl_missing(
+        self, mock_run, mock_system, service_manager,
+    ):
+        """If loginctl is unavailable, treat as enabled (avoid false alarms)."""
+        assert service_manager.linger_enabled("felipe") is True
+
     def test_get_service_statistics(self, service_manager):
         """Test getting service statistics"""
         # Mock some service statuses

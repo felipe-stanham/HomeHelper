@@ -73,6 +73,21 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Postgres is not reachable — apps with database:true will fail to provision")
 
+    # Linger check: per-app user units only survive logout when linger is on.
+    # Warn loudly but do not block startup — the main platform itself runs as
+    # a system-scope unit and is unaffected by user-mode linger.
+    import getpass
+    import platform
+    if platform.system() == "Linux":
+        linger_user = getpass.getuser()
+        if not service_manager.linger_enabled(linger_user):
+            logger.warning(
+                "systemd --user linger is disabled for %s. Per-app units may "
+                "not survive logout. Enable with: sudo loginctl enable-linger %s",
+                linger_user,
+                linger_user,
+            )
+
     # Discover apps on startup
     logger.info("Discovering applications...")
     discovered_count = app_manager.discover_apps()

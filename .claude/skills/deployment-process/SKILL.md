@@ -118,7 +118,18 @@ Notes:
 - `--app-dir src` matches the repo layout (`src/latarnia/`).
 - `Environment=ENV=...` is what `ServiceManager` reads to env-scope per-app unit names (see P-0004). Keep it in sync with `DEPLOY_PATH`.
 
-## 4. Enable and start
+## 4. Enable user-mode linger for `felipe`
+
+Per-app services are user-scope systemd units (see P-0005). They only start at boot — and survive logout — when linger is enabled for the user that owns them. Without this, `latarnia-{env}-{app}.service` units silently fail to come up on platform restart.
+
+```
+sudo loginctl enable-linger felipe
+loginctl show-user felipe --property=Linger   # → Linger=yes
+```
+
+The platform logs a `WARNING` at startup if linger is disabled.
+
+## 5. Enable and start
 ```
 sudo systemctl daemon-reload
 sudo systemctl enable --now latarnia-tst.service
@@ -126,7 +137,7 @@ sudo systemctl enable --now latarnia-prd.service
 sudo systemctl status latarnia-tst.service latarnia-prd.service
 ```
 
-## 5. Verify
+## 6. Verify
 ```
 systemctl list-units --type=service --all | grep -i latarnia
 curl http://localhost:8000/health   # TST
