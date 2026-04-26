@@ -132,6 +132,23 @@ class PortManager:
         self.logger.info(f"Allocated port {port} to {app_type} app {app_id}")
         return port
     
+    def claim_port(self, app_id: str, app_type: str, port: int) -> int:
+        """Reserve a specific port for an app without availability checks.
+
+        Used during startup reconciliation when a per-app systemd unit is
+        already active on `port` — we know the port is in use by us, so we
+        record the allocation directly.
+
+        Caller contract: must only be called when the app has no existing
+        port allocation in this PortManager (e.g., at startup with empty
+        in-memory state). Calling on an `app_id` that already maps to a
+        different port silently overwrites the mapping and orphans the
+        prior `allocations[]` entry.
+
+        Returns the claimed port.
+        """
+        return self._allocate_specific_port(app_id, app_type, port)
+
     def release_port(self, app_id: str) -> bool:
         """
         Release a port allocated to an application
@@ -187,6 +204,10 @@ class PortManager:
 
         self.logger.error(f"No available MCP ports in range {self.mcp_port_start}-{self.mcp_port_end}")
         return None
+
+    def claim_mcp_port(self, app_id: str, port: int) -> int:
+        """Reserve a specific MCP port without availability checks (reconciliation)."""
+        return self._allocate_specific_mcp_port(app_id, port)
 
     def _allocate_specific_mcp_port(self, app_id: str, port: int) -> int:
         """Allocate a specific MCP port to an application"""

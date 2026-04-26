@@ -1,19 +1,19 @@
 """
-Example Full App — Demonstrates all Latarnia P-0002 capabilities.
+Example Full App — Demonstrates all Latarnia capabilities.
 
 This app exercises every platform feature:
 - Database: connects via --db-url, queries items/events/tags tables
 - MCP server: tools that read/write the database
 - Web UI: HTML dashboard served at / with live data from the API
 - Redis Streams: publishes events on item creation, subscribes to commands
-- Logging: writes to --logs-dir
+- Logging: stdout only (Latarnia routes to journald on Linux per P-0005 Scope 4)
 - Data: persists app state to --data-dir
 - Dependency: requires example_companion >= 1.0.0
 
 Usage:
     python app.py --port 8101 --mcp-port 9001 \
         --db-url postgresql://... --redis-url redis://localhost:6379/0 \
-        --data-dir /opt/latarnia/data --logs-dir /opt/latarnia/logs
+        --data-dir /opt/latarnia/data
 """
 
 import argparse
@@ -47,23 +47,18 @@ db_url: Optional[str] = None
 redis_url: Optional[str] = None
 mcp_port: Optional[int] = None
 data_dir: Optional[Path] = None
-logs_dir: Optional[Path] = None
 
 logger = logging.getLogger("example_full_app")
 
 
-def setup_logging(logs_path: Optional[Path]):
-    """Configure logging to both console and file (if logs_dir provided)."""
-    handlers = [logging.StreamHandler()]
-    if logs_path:
-        logs_path.mkdir(parents=True, exist_ok=True)
-        log_file = logs_path / "example_full_app.log"
-        handlers.append(logging.FileHandler(str(log_file)))
-
+def setup_logging():
+    """Log to stdout only. Latarnia routes stdout to journald (Linux) or
+    captures it to a file (Darwin); apps don't manage their own log files
+    (P-0005 Scope 4)."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=handlers,
+        handlers=[logging.StreamHandler()],
     )
 
 
@@ -276,7 +271,6 @@ async def health():
             "streams_active": redis_url is not None,
             "items_created": app_state.get("items_created", 0),
             "data_dir": str(data_dir) if data_dir else None,
-            "logs_dir": str(logs_dir) if logs_dir else None,
             "last_check": datetime.now().isoformat(),
         },
     }
@@ -519,7 +513,6 @@ async def call_tool(name: str, arguments: dict):
             "mcp_port": mcp_port,
             "tools": 3,
             "data_dir": str(data_dir) if data_dir else None,
-            "logs_dir": str(logs_dir) if logs_dir else None,
             "state": app_state,
         }, default=str)}]
 
@@ -560,7 +553,7 @@ def _run_mcp_server(port: int):
 # ---------------------------------------------------------------------------
 
 def main():
-    global db_url, redis_url, mcp_port, data_dir, logs_dir, app_state
+    global db_url, redis_url, mcp_port, data_dir, app_state
 
     parser = argparse.ArgumentParser(description="Example Full App")
     parser.add_argument("--port", type=int, default=8101, help="REST API port")
@@ -568,17 +561,15 @@ def main():
     parser.add_argument("--db-url", type=str, default=None, help="Postgres connection URL")
     parser.add_argument("--redis-url", type=str, default=None, help="Redis connection URL")
     parser.add_argument("--data-dir", type=str, default=None, help="Data directory")
-    parser.add_argument("--logs-dir", type=str, default=None, help="Logs directory")
     args = parser.parse_args()
 
     db_url = args.db_url
     redis_url = args.redis_url
     mcp_port = args.mcp_port
     data_dir = Path(args.data_dir) if args.data_dir else None
-    logs_dir = Path(args.logs_dir) if args.logs_dir else None
 
-    # Setup logging (to console + file if logs_dir provided)
-    setup_logging(logs_dir)
+    # Setup logging (stdout only — Latarnia routes to journald on Linux).
+    setup_logging()
 
     # Load persistent state from data directory
     app_state = load_state()
@@ -589,7 +580,6 @@ def main():
     logger.info("  DB URL:    %s", "set" if db_url else "not set")
     logger.info("  Redis URL: %s", "set" if redis_url else "not set")
     logger.info("  Data dir:  %s", data_dir or "not set")
-    logger.info("  Logs dir:  %s", logs_dir or "not set")
     logger.info("  State:     %s", app_state)
 
     # Start MCP server in background thread
