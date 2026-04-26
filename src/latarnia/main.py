@@ -129,13 +129,22 @@ async def lifespan(app: FastAPI):
     # Start Redis event subscriber
     logger.info("Starting Redis event subscriber...")
     event_subscriber.start()
-    
+
+    # Start health monitoring. The dashboard's combined `overall_status`
+    # (P-0005 cap-005) needs this loop running to refresh /health results.
+    # Without it the dashboard stays at "yellow / unreachable" even when
+    # apps are fine.
+    logger.info("Starting health monitor...")
+    await health_monitor.start_monitoring()
+
     logger.info("Latarnia main application started successfully")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down Latarnia main application")
+    logger.info("Stopping health monitor...")
+    await health_monitor.stop_monitoring()
     logger.info("Stopping Redis event subscriber...")
     event_subscriber.stop()
     logger.info("Stopping all managed service apps...")
