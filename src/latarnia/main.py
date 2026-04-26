@@ -73,18 +73,36 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Postgres is not reachable — apps with database:true will fail to provision")
 
+    # Linger check: per-app user units only survive logout when linger is on.
+    # Warn loudly but do not block startup — the main platform itself runs as
+    # a system-scope unit and is unaffected by user-mode linger.
+    import getpass
+    import platform
+    if platform.system() == "Linux":
+        linger_user = getpass.getuser()
+        if not service_manager.linger_enabled(linger_user):
+            logger.warning(
+                "systemd --user linger is disabled for %s. Per-app units may "
+                "not survive logout. Enable with: sudo loginctl enable-linger %s",
+                linger_user,
+                linger_user,
+            )
+
     # Discover apps on startup
     logger.info("Discovering applications...")
     discovered_count = app_manager.discover_apps()
     logger.info(f"Discovered {discovered_count} applications")
     
-    # Auto-start service apps with auto_start=true
+    # Auto-start service apps with auto_start=true. The launcher is chosen
+    # per-app (OS, type) by pick_launcher: Linux+service → systemd, Darwin →
+    # subprocess fallback.
     logger.info("Auto-starting service apps...")
     auto_start_count = 0
     for app_entry in app_manager.registry.get_all_apps():
         if app_entry.type == "service" and app_entry.manifest.config.auto_start:
             logger.info(f"Auto-starting service app: {app_entry.name} ({app_entry.app_id})")
-            if macos_process_manager.start_app(app_entry.app_id):
+            launcher = pick_launcher(app_entry)
+            if launcher.start_service(app_entry.app_id):
                 auto_start_count += 1
                 logger.info(f"Successfully started {app_entry.name}")
             else:
@@ -111,17 +129,26 @@ async def lifespan(app: FastAPI):
     # Start Redis event subscriber
     logger.info("Starting Redis event subscriber...")
     event_subscriber.start()
-    
+
+    # Start health monitoring. The dashboard's combined `overall_status`
+    # (P-0005 cap-005) needs this loop running to refresh /health results.
+    # Without it the dashboard stays at "yellow / unreachable" even when
+    # apps are fine.
+    logger.info("Starting health monitor...")
+    await health_monitor.start_monitoring()
+
     logger.info("Latarnia main application started successfully")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down Latarnia main application")
+    logger.info("Stopping health monitor...")
+    await health_monitor.stop_monitoring()
     logger.info("Stopping Redis event subscriber...")
     event_subscriber.stop()
     logger.info("Stopping all managed service apps...")
-    macos_process_manager.stop_all()
+    subprocess_launcher.stop_all()
     logger.info("Stopping all Streamlit apps...")
     streamlit_manager.stop_all()
     logger.info("Closing web proxy HTTP client...")
@@ -140,7 +167,7 @@ event_subscriber = RedisEventSubscriber(
 # Initialize app management components
 from .managers import AppManager, PortManager, ServiceManager
 from .managers.health_monitor import HealthMonitor
-from .managers.process_manager_macos import MacOSProcessManager
+from .managers.subprocess_launcher import SubprocessLauncher
 from .managers.streamlit_manager import StreamlitManager
 from .core.pg_client import PgClient
 from .managers.db_provisioner import DbProvisioner
@@ -155,10 +182,20 @@ app_manager = AppManager(
     config_manager, port_manager,
     db_provisioner=db_provisioner, stream_manager=stream_manager,
 )
-service_manager = ServiceManager(config_manager, app_manager)
+service_manager = ServiceManager(config_manager, app_manager, port_manager)
 health_monitor = HealthMonitor(config_manager, app_manager, service_manager)
-macos_process_manager = MacOSProcessManager(config_manager, app_manager, port_manager)
+subprocess_launcher = SubprocessLauncher(config_manager, app_manager, port_manager)
 streamlit_manager = StreamlitManager(config_manager, app_manager, port_manager)
+
+
+from .managers.launcher_router import pick_launcher as _pick_launcher_router
+
+
+def pick_launcher(app_entry):
+    """Pick the lifecycle launcher for `app_entry`. See launcher_router.py."""
+    return _pick_launcher_router(
+        app_entry, service_manager, subprocess_launcher, streamlit_manager,
+    )
 
 # Initialize MCP gateway (conditional on config)
 from .managers.mcp_gateway import MCPGateway
@@ -328,12 +365,19 @@ async def discover_apps():
 
 @app.get("/api/apps")
 async def get_all_apps():
-    """Get all registered applications"""
+    """Get all registered applications with combined systemd+/health status."""
     try:
         apps = app_manager.registry.get_all_apps()
+        payload = []
+        for app_entry in apps:
+            entry = app_entry.to_dict()
+            combined = health_monitor.get_overall_status(app_entry.app_id)
+            entry["overall_status"] = combined["overall_status"]
+            entry["overall_status_detail"] = combined["detail"]
+            payload.append(entry)
         return {
-            "apps": [app.to_dict() for app in apps],
-            "total_count": len(apps)
+            "apps": payload,
+            "total_count": len(payload)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1010,16 +1054,17 @@ async def get_app_ui_resource_detail(app_id: str, resource: str, item_id: str):
 
 @app.post("/api/apps/{app_id}/process/start")
 async def start_app_process(app_id: str):
-    """Start an app process using the process manager"""
+    """Start an app via the launcher chosen by pick_launcher (systemd on Linux, subprocess on macOS)."""
     try:
         app = app_manager.registry.get_app(app_id)
         if not app:
             raise HTTPException(status_code=404, detail=f"App {app_id} not found")
-        
+
         if app.type != "service":
             raise HTTPException(status_code=400, detail="Only service apps can be started this way")
-        
-        success = macos_process_manager.start_app(app_id)
+
+        launcher = pick_launcher(app)
+        success = launcher.start_service(app_id)
 
         if not success:
             raise HTTPException(status_code=500, detail="Failed to start app")
@@ -1029,7 +1074,7 @@ async def start_app_process(app_id: str):
         if mcp_gateway:
             mcp_compat = await mcp_gateway.on_app_started(app_id)
         if not mcp_compat:
-            macos_process_manager.stop_app(app_id)
+            launcher.stop_service(app_id)
             raise HTTPException(
                 status_code=409,
                 detail=f"MCP backward compatibility violation for app {app_id}. "
@@ -1047,9 +1092,16 @@ async def start_app_process(app_id: str):
 
 @app.post("/api/apps/{app_id}/process/stop")
 async def stop_app_process(app_id: str):
-    """Stop an app process using the process manager"""
+    """Stop an app via the launcher chosen by pick_launcher."""
     try:
-        success = macos_process_manager.stop_app(app_id)
+        app = app_manager.registry.get_app(app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+        if app.type != "service":
+            raise HTTPException(status_code=400, detail="Only service apps can be stopped this way")
+
+        launcher = pick_launcher(app)
+        success = launcher.stop_service(app_id)
 
         if not success:
             raise HTTPException(status_code=404, detail="App is not running")
@@ -1059,7 +1111,7 @@ async def stop_app_process(app_id: str):
             await mcp_gateway.on_app_stopped(app_id)
 
         return {"success": True, "message": f"App {app_id} stopped successfully"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1069,16 +1121,17 @@ async def stop_app_process(app_id: str):
 
 @app.post("/api/apps/{app_id}/process/restart")
 async def restart_app_process(app_id: str):
-    """Restart an app process using the process manager"""
+    """Restart an app via the launcher chosen by pick_launcher."""
     try:
         app = app_manager.registry.get_app(app_id)
         if not app:
             raise HTTPException(status_code=404, detail=f"App {app_id} not found")
-        
+
         if app.type != "service":
             raise HTTPException(status_code=400, detail="Only service apps can be restarted this way")
-        
-        success = macos_process_manager.restart_app(app_id)
+
+        launcher = pick_launcher(app)
+        success = launcher.restart_service(app_id)
 
         if not success:
             raise HTTPException(status_code=500, detail="Failed to restart app")
@@ -1088,7 +1141,7 @@ async def restart_app_process(app_id: str):
         if mcp_gateway:
             mcp_compat = await mcp_gateway.on_app_started(app_id)
         if not mcp_compat:
-            macos_process_manager.stop_app(app_id)
+            launcher.stop_service(app_id)
             raise HTTPException(
                 status_code=409,
                 detail=f"MCP backward compatibility violation for app {app_id}. "
@@ -1096,7 +1149,7 @@ async def restart_app_process(app_id: str):
             )
 
         return {"success": True, "message": f"App {app_id} restarted successfully"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1106,20 +1159,24 @@ async def restart_app_process(app_id: str):
 
 @app.get("/api/apps/{app_id}/process/info")
 async def get_app_process_info(app_id: str):
-    """Get detailed process information including uptime"""
+    """Get detailed process information including uptime.
+
+    Subprocess-launched apps (macOS) report PID/uptime here. Systemd-managed
+    apps (Linux) return None — query /api/services/{id}/status for those.
+    """
     try:
-        process_info = macos_process_manager.get_process_info(app_id)
-        
+        process_info = subprocess_launcher.get_process_info(app_id)
+
         if process_info is None:
             # Also check Streamlit manager
             streamlit_info = streamlit_manager.get_running_apps()
             if app_id in streamlit_info:
                 return {"success": True, "data": streamlit_info[app_id]}
-            
+
             return {"success": True, "data": None, "message": "Process not running"}
-        
+
         return {"success": True, "data": process_info}
-        
+
     except Exception as e:
         logger.error(f"Failed to get process info for app {app_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

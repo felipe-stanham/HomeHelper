@@ -8,8 +8,10 @@ Includes MCP server liveness probes for apps that declare mcp_server: true.
 
 import asyncio
 import logging
+import platform
+import subprocess
 import aiohttp
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Tuple
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from enum import Enum
@@ -17,6 +19,14 @@ from enum import Enum
 from ..core.config import ConfigManager
 from .app_manager import AppManager, AppType, AppStatus, MCPInfo
 from .service_manager import ServiceManager, ServiceStatus
+
+
+class OverallStatus(str, Enum):
+    """Combined dashboard status per P-0005 flow-03 rules table."""
+    GREEN = "green"     # process alive AND /health good
+    YELLOW = "yellow"   # degraded or transient (warning, activating, /health timeout)
+    RED = "red"         # systemd failed, or /health error, or process dead
+    GREY = "grey"       # stopped on purpose (systemd inactive, no data)
 
 
 class HealthStatus(str, Enum):
@@ -88,7 +98,14 @@ class HealthMonitor:
         
         # HTTP session for health checks
         self._session: Optional[aiohttp.ClientSession] = None
-    
+
+        # Cached systemd ActiveState map (populated on demand).
+        # Time-based: re-fetched when the last-refresh age exceeds
+        # `config.interval`. One batched systemctl call per interval,
+        # shared across all /api/apps lookups within the window.
+        self._systemd_states: Dict[str, str] = {}
+        self._systemd_states_refreshed_at: Optional[datetime] = None
+
     async def start_monitoring(self):
         """Start the health monitoring system"""
         if self._running:
@@ -456,8 +473,157 @@ class HealthMonitor:
     def is_monitoring(self) -> bool:
         """
         Check if health monitoring is currently running
-        
+
         Returns:
             True if monitoring is active
         """
         return self._running
+
+    # P-0005 Scope 3: combined systemd + /health status
+
+    def get_systemd_states(self) -> Dict[str, str]:
+        """
+        Return {app_id: ActiveState} for every `latarnia-{env}-*.service` unit.
+
+        One batched `systemctl --user show` call on Linux; empty dict on
+        non-Linux hosts. Result is cached for one health-check interval so
+        per-refresh cost is bounded regardless of app count. `env` is read
+        from the associated `ServiceManager` (immutable for the process
+        lifetime), so the cache is safe to share across callers.
+        """
+        if platform.system() != "Linux":
+            return {}
+
+        now = datetime.now()
+        if (
+            self._systemd_states_refreshed_at is not None
+            and (now - self._systemd_states_refreshed_at).total_seconds() < self.config.interval
+        ):
+            return self._systemd_states
+
+        env_value = self.service_manager.env
+        prefix = f"latarnia-{env_value}-"
+        pattern = f"{prefix}*.service"
+        try:
+            result = subprocess.run(
+                [
+                    "systemctl", "--user", "show",
+                    "--property=Id,ActiveState,SubState",
+                    "--type=service",
+                    pattern,
+                ],
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            self.logger.debug("systemctl not available; skipping systemd state fetch")
+            self._systemd_states = {}
+            self._systemd_states_refreshed_at = now
+            return self._systemd_states
+
+        if result.returncode != 0:
+            self.logger.debug(
+                "systemctl show returned %d: %s",
+                result.returncode,
+                result.stderr.strip(),
+            )
+            self._systemd_states = {}
+            self._systemd_states_refreshed_at = now
+            return self._systemd_states
+
+        self._systemd_states = self._parse_systemctl_show(result.stdout, prefix)
+        self._systemd_states_refreshed_at = now
+        return self._systemd_states
+
+    @staticmethod
+    def _parse_systemctl_show(output: str, prefix: str) -> Dict[str, str]:
+        """
+        Parse the output of `systemctl show --property=Id,ActiveState,SubState`.
+
+        `systemctl show` emits property lines for each unit separated by blank
+        lines. Extract (Id, ActiveState) per block, strip the env prefix and
+        `.service` suffix, and return {app_id: ActiveState}.
+        """
+        states: Dict[str, str] = {}
+        current_id: Optional[str] = None
+        current_active: Optional[str] = None
+
+        for line in output.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                if current_id and current_active:
+                    if current_id.startswith(prefix) and current_id.endswith(".service"):
+                        app_id = current_id[len(prefix):-len(".service")]
+                        states[app_id] = current_active
+                current_id = None
+                current_active = None
+                continue
+            if "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            if key == "Id":
+                current_id = value
+            elif key == "ActiveState":
+                current_active = value
+
+        # Handle trailing block (output without terminating blank line).
+        if current_id and current_active:
+            if current_id.startswith(prefix) and current_id.endswith(".service"):
+                app_id = current_id[len(prefix):-len(".service")]
+                states[app_id] = current_active
+
+        return states
+
+    @staticmethod
+    def _combine(systemd_state: Optional[str], health_result: Optional[HealthCheckResult]) -> Tuple[OverallStatus, str]:
+        """
+        Combine a systemd ActiveState with an app's /health result per flow-03.
+
+        Args:
+            systemd_state: `active`, `activating`, `inactive`, `failed`, or None
+                (None means systemd is unavailable — e.g. macOS — in which
+                case health_result alone drives the answer).
+            health_result: latest /health response, or None if never probed or
+                the app was not reachable.
+
+        Returns:
+            (OverallStatus, detail) matching the flow-03 rules table.
+        """
+        # Systemd-authoritative bad states first.
+        if systemd_state == "failed":
+            return OverallStatus.RED, "systemd unit failed"
+        if systemd_state == "inactive":
+            return OverallStatus.GREY, "stopped"
+        if systemd_state == "activating":
+            return OverallStatus.YELLOW, "starting"
+
+        # From here: systemd_state is "active" OR None (non-Linux).
+        if health_result is None:
+            # No health info yet — treat as yellow on Linux (process alive but
+            # unknown), grey on non-Linux (nothing to report).
+            if systemd_state == "active":
+                return OverallStatus.YELLOW, "/health unreachable"
+            return OverallStatus.GREY, "no status"
+
+        status_map = {
+            HealthStatus.GOOD: (OverallStatus.GREEN, health_result.message or "healthy"),
+            HealthStatus.WARNING: (OverallStatus.YELLOW, health_result.message or "degraded"),
+            HealthStatus.ERROR: (OverallStatus.RED, health_result.message or "app error"),
+            HealthStatus.UNKNOWN: (OverallStatus.YELLOW, health_result.message or "unknown"),
+        }
+        return status_map.get(
+            health_result.status, (OverallStatus.YELLOW, health_result.message or "unknown")
+        )
+
+    def get_overall_status(self, app_id: str) -> Dict[str, str]:
+        """
+        Return `{overall_status, detail}` for a single app, combining systemd
+        ActiveState with the latest /health result.
+
+        Used by `/api/apps` to populate each app's `overall_status` field.
+        """
+        systemd_states = self.get_systemd_states()
+        systemd_state = systemd_states.get(app_id) if systemd_states else None
+        health_result = self.health_results.get(app_id)
+        status, detail = self._combine(systemd_state, health_result)
+        return {"overall_status": status.value, "detail": detail}

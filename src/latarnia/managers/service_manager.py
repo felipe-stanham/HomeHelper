@@ -5,9 +5,13 @@ Handles systemd service integration, lifecycle management, and health monitoring
 Provides systemd service template generation and process monitoring capabilities.
 """
 
+import getpass
 import json
 import logging
+import os
+import platform
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -17,6 +21,7 @@ from enum import Enum
 
 from ..core.config import ConfigManager
 from .app_manager import AppManager, AppType, AppStatus
+from .port_manager import PortManager
 
 
 class ServiceStatus(str, Enum):
@@ -78,9 +83,14 @@ class ServiceInfo:
 class ServiceManager:
     """Main service manager for systemd integration"""
     
-    def __init__(self, config_manager: ConfigManager, app_manager: AppManager):
+    def __init__(self, config_manager: ConfigManager, app_manager: AppManager,
+                 port_manager: Optional[PortManager] = None):
         self.config_manager = config_manager
         self.app_manager = app_manager
+        # PortManager is optional for backward compat with older callers/tests;
+        # when present, start_service auto-allocates REST and MCP ports so the
+        # systemd path matches SubprocessLauncher's one-shot contract.
+        self.port_manager = port_manager
         self.logger = logging.getLogger("latarnia.service_manager")
         
         # Service tracking
@@ -89,10 +99,65 @@ class ServiceManager:
         # systemd paths
         self.systemd_user_dir = Path.home() / ".config" / "systemd" / "user"
         self.systemd_user_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Service name prefix
-        self.service_prefix = "latarnia-"
-    
+
+        # Environment-scoped service prefix. TST and PRD run side-by-side on
+        # the homeserver under the same user; without the env segment,
+        # per-app unit files in ~/.config/systemd/user/ would collide.
+        env = os.environ.get("ENV", "dev").lower()
+        if env not in ("dev", "tst", "prd"):
+            self.logger.warning(
+                "Unrecognized ENV=%r; falling back to 'dev' for service naming", env
+            )
+            env = "dev"
+        self.env = env
+        self.service_prefix = f"latarnia-{env}-"
+
+        # Absolute path to the platform's venv Python. Generated unit files
+        # use this for ExecStart so systemd does not depend on PATH.
+        self.python_executable = sys.executable
+
+    def linger_enabled(self, user: Optional[str] = None) -> bool:
+        """
+        Check whether systemd --user linger is enabled for the given user.
+
+        Linger keeps the user systemd instance running outside an active login
+        session — required for per-app user units to start at platform boot.
+        On non-Linux hosts, returns True (no-op; no systemd to gate on).
+
+        Args:
+            user: Username to check. Defaults to the current user.
+
+        Returns:
+            True if linger is enabled, False if disabled, True if undetectable
+            (treat as enabled to avoid false positives on non-Linux).
+        """
+        if platform.system() != "Linux":
+            return True
+
+        target_user = user or getpass.getuser()
+        try:
+            result = subprocess.run(
+                ["loginctl", "show-user", target_user, "--property=Linger"],
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            self.logger.debug("loginctl not available; skipping linger check")
+            return True
+
+        if result.returncode != 0:
+            self.logger.debug(
+                "loginctl returned %d for user %s; assuming linger enabled",
+                result.returncode,
+                target_user,
+            )
+            return True
+
+        for line in result.stdout.strip().splitlines():
+            if line.startswith("Linger="):
+                return line.split("=", 1)[1].strip().lower() == "yes"
+        return True
+
     def generate_service_template(self, app_id: str) -> Optional[str]:
         """
         Generate systemd service template for an application
@@ -112,15 +177,21 @@ class ServiceManager:
             self.logger.error(f"App {app_id} has no assigned port")
             return None
         
-        # Build command arguments
+        # Build command arguments. ExecStart uses the absolute path to the
+        # platform's venv Python so systemd does not need PATH set.
         cmd_args = [
-            "python", app.manifest.main_file,
+            self.python_executable, app.manifest.main_file,
             "--port", str(app.runtime_info.assigned_port)
         ]
 
         # Add MCP port if app has MCP enabled and port is allocated
         if app.mcp_info and app.mcp_info.enabled and app.mcp_info.mcp_port:
             cmd_args.extend(["--mcp-port", str(app.mcp_info.mcp_port)])
+
+        # Pass --redis-url (matches SubprocessLauncher contract) so apps
+        # that read the CLI arg work identically under both launchers.
+        if app.manifest.config and app.manifest.config.redis_required:
+            cmd_args.extend(["--redis-url", self.config_manager.get_redis_url()])
 
         # Add optional arguments based on config
         if app.manifest.config and app.manifest.config.data_dir:
@@ -145,8 +216,10 @@ class ServiceManager:
             redis_config = self.config_manager.config.redis
             env_vars.append(f"REDIS_HOST={redis_config.host}")
             env_vars.append(f"REDIS_PORT={redis_config.port}")
-            if redis_config.password:
-                env_vars.append(f"REDIS_PASSWORD={redis_config.password}")
+            # password is optional in RedisConfig — guard via getattr.
+            redis_password = getattr(redis_config, "password", None)
+            if redis_password:
+                env_vars.append(f"REDIS_PASSWORD={redis_password}")
         
         # Add database URL via environment variable (not command line)
         if db_url_env:
@@ -157,20 +230,32 @@ class ServiceManager:
             for key, value in app.manifest.environment.items():
                 env_vars.append(f"{key}={value}")
         
-        # Restart policy
-        restart_policy = "always"
+        # Restart policy: default is on-failure (matches systemd best practice
+        # for supervised long-running services). Manifest may override per-app.
+        # Map "never" → systemd's "no" since systemd does not accept "never".
+        manifest_policy = None
         if app.manifest.config and app.manifest.config.restart_policy:
-            restart_policy = app.manifest.config.restart_policy
-        
-        # Generate service template
+            manifest_policy = app.manifest.config.restart_policy
+        restart_policy = manifest_policy or "on-failure"
+        if restart_policy == "never":
+            restart_policy = "no"
+
+        # Generate service template. Environment=ENV={env} is set so apps
+        # reading ENV (and ServiceManager itself if re-entrant) behave
+        # consistently with the main platform unit. PartOf=latarnia-{env}
+        # ensures stopping the main platform also stops its app units.
+        # No User= — these are user-scope units (`systemctl --user`) that
+        # already run as the invoking user; `User=` would be a setresuid
+        # call and fails with status=216/GROUP under user-mode systemd.
+        main_unit = f"latarnia-{self.env}.service"
         service_template = f"""[Unit]
 Description=Latarnia Service - {app.manifest.name}
 After=network.target
 Wants=network.target
+PartOf={main_unit}
 
 [Service]
 Type=simple
-User={Path.home().owner()}
 WorkingDirectory={app.path}
 ExecStart={' '.join(cmd_args)}
 Restart={restart_policy}
@@ -178,15 +263,16 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier={self.service_prefix}{app_id}
+Environment=ENV={self.env}
 """
-        
+
         # Add environment variables
         if env_vars:
             for env_var in env_vars:
                 service_template += f"Environment={env_var}\n"
-        
+
         service_template += "\n[Install]\nWantedBy=default.target\n"
-        
+
         return service_template
     
     def create_service_file(self, app_id: str) -> bool:
@@ -231,46 +317,95 @@ SyslogIdentifier={self.service_prefix}{app_id}
     
     def start_service(self, app_id: str) -> bool:
         """
-        Start a systemd service for an application
-        
+        Start a systemd service for an application end-to-end.
+
+        Allocates ports if needed, writes the unit file (daemon-reload), then
+        runs `systemctl --user start`. Mirrors `SubprocessLauncher.start_service`
+        so call sites can dispatch through `pick_launcher` uniformly.
+
         Args:
             app_id: Application identifier
-            
+
         Returns:
             True if service started successfully
         """
+        service_name = f"{self.service_prefix}{app_id}.service"
+
         try:
-            service_name = f"{self.service_prefix}{app_id}.service"
-            
+            app = self.app_manager.registry.get_app(app_id)
+            if not app:
+                self.logger.error(f"App {app_id} not found")
+                return False
+            if app.type != AppType.SERVICE:
+                self.logger.error(f"App {app_id} is not a service app")
+                return False
+
+            # Allocate ports if PortManager is wired and no port is set yet.
+            allocated_port = False
+            allocated_mcp_port = False
+            if self.port_manager is not None and not app.runtime_info.assigned_port:
+                port = self.port_manager.allocate_port(app_id, app.type)
+                if not port:
+                    self.logger.error(f"Failed to allocate port for app {app_id}")
+                    return False
+                app.runtime_info.assigned_port = port
+                allocated_port = True
+
+                if app.mcp_info and app.mcp_info.enabled and not app.mcp_info.mcp_port:
+                    mcp_port = self.port_manager.allocate_mcp_port(app_id)
+                    if not mcp_port:
+                        self.logger.error(f"Failed to allocate MCP port for app {app_id}")
+                        self.port_manager.release_port(app_id)
+                        app.runtime_info.assigned_port = None
+                        return False
+                    app.mcp_info.mcp_port = mcp_port
+                    allocated_mcp_port = True
+
+            # Ensure the unit file exists and is up-to-date with the current
+            # port assignment. create_service_file calls generate_service_template
+            # and runs daemon-reload.
+            if not self.create_service_file(app_id):
+                if allocated_port and self.port_manager is not None:
+                    self.port_manager.release_port(app_id)
+                    app.runtime_info.assigned_port = None
+                if allocated_mcp_port and self.port_manager is not None:
+                    self.port_manager.release_mcp_port(app_id)
+                    if app.mcp_info:
+                        app.mcp_info.mcp_port = None
+                return False
+
+            # Now actually start the unit.
             result = subprocess.run(
                 ["systemctl", "--user", "start", service_name],
                 capture_output=True,
                 text=True
             )
-            
+
             if result.returncode == 0:
                 self.logger.info(f"Started service for app {app_id}")
-                # Update app status
                 self.app_manager.registry.update_app(app_id, status=AppStatus.RUNNING)
                 return True
-            else:
-                error_msg = f"Failed to start service: {result.stderr}"
-                self.logger.error(f"Failed to start service for app {app_id}: {error_msg}")
-                # Update app with error
-                app = self.app_manager.registry.get_app(app_id)
-                if app:
-                    app.runtime_info.error_message = error_msg
-                    self.app_manager.registry.update_app(
-                        app_id, 
-                        status=AppStatus.ERROR,
-                        runtime_info=app.runtime_info
-                    )
-                return False
-                
+
+            error_msg = f"Failed to start service: {result.stderr}"
+            self.logger.error(f"Failed to start service for app {app_id}: {error_msg}")
+            app.runtime_info.error_message = error_msg
+            self.app_manager.registry.update_app(
+                app_id,
+                status=AppStatus.ERROR,
+                runtime_info=app.runtime_info
+            )
+            if allocated_port and self.port_manager is not None:
+                self.port_manager.release_port(app_id)
+                app.runtime_info.assigned_port = None
+            if allocated_mcp_port and self.port_manager is not None:
+                self.port_manager.release_mcp_port(app_id)
+                if app.mcp_info:
+                    app.mcp_info.mcp_port = None
+            return False
+
         except Exception as e:
             error_msg = f"Exception starting service: {str(e)}"
             self.logger.error(f"Failed to start service for app {app_id}: {error_msg}")
-            # Update app with error
             app = self.app_manager.registry.get_app(app_id)
             if app:
                 app.runtime_info.error_message = error_msg
