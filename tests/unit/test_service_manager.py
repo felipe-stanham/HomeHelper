@@ -181,7 +181,9 @@ class TestServiceManager:
         assert "Environment=REDIS_HOST=localhost" in template
         assert "Environment=REDIS_PORT=6379" in template
         assert "--data-dir" in template
-        assert "--logs-dir" in template
+        # P-0005 Scope 4: --logs-dir is no longer passed (journald is the
+        # canonical sink on Linux).
+        assert "--logs-dir" not in template
 
     def test_generate_service_template_uses_sys_executable(
         self, service_manager, mock_app_manager, sample_service_app, monkeypatch,
@@ -223,15 +225,16 @@ class TestServiceManager:
         assert template is not None
         assert expected in template
 
-    def test_generate_service_template_partof_main_unit(
+    def test_generate_service_template_no_partof(
         self, service_manager, mock_app_manager, sample_service_app,
     ):
-        """Per-app units carry PartOf=latarnia-{env}.service so a main-platform
-        stop also stops the app units (P-0005 spec, lifecycle coupling)."""
+        """Per-app units must NOT carry PartOf — referencing a system-scope
+        unit from a user-scope unit is a silent no-op, and we want app
+        lifetimes independent of the platform (Scope 4 follow-up)."""
         mock_app_manager.registry.get_app.return_value = sample_service_app
         template = service_manager.generate_service_template("test-service")
         assert template is not None
-        assert "PartOf=latarnia-dev.service" in template
+        assert "PartOf=" not in template
 
     @pytest.mark.parametrize("policy,expected_line", [
         (None, "Restart=on-failure"),         # manifest default → on-failure
@@ -440,6 +443,86 @@ class TestServiceManager:
             text=True
         )
     
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Linux")
+    @patch("latarnia.managers.service_manager.subprocess.run")
+    def test_reconcile_running_units_marks_active_apps_running(
+        self, mock_run, mock_system,
+        service_manager, mock_app_manager, sample_service_app, temp_dirs,
+    ):
+        """Active per-app units → app marked RUNNING with port reclaimed."""
+        # Wire a real PortManager substitute via a Mock that records calls.
+        port_manager = MagicMock()
+        port_manager.claim_port = MagicMock()
+        port_manager.claim_mcp_port = MagicMock()
+        service_manager.port_manager = port_manager
+
+        # Pretend the unit file exists with a known ExecStart.
+        unit_path = service_manager.systemd_user_dir / "latarnia-dev-test-service.service"
+        unit_path.write_text(
+            "[Service]\n"
+            "ExecStart=/opt/latarnia/dev/.venv/bin/python app.py "
+            "--port 8123 --mcp-port 9012 --redis-url redis://localhost:6379/0\n"
+        )
+
+        # systemctl show returns one active unit matching the prefix.
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = (
+            "Id=latarnia-dev-test-service.service\nActiveState=active\n\n"
+        )
+        # Registry returns the sample app.
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+        # Make sure mcp_info exists so mcp port path is exercised.
+        from latarnia.managers.app_manager import MCPInfo
+        sample_service_app.mcp_info = MCPInfo(enabled=True)
+
+        count = service_manager.reconcile_running_units()
+
+        assert count == 1
+        port_manager.claim_port.assert_called_once_with("test-service", AppType.SERVICE, 8123)
+        port_manager.claim_mcp_port.assert_called_once_with("test-service", 9012)
+        assert sample_service_app.runtime_info.assigned_port == 8123
+        assert sample_service_app.mcp_info.mcp_port == 9012
+        mock_app_manager.registry.update_app.assert_called_with(
+            "test-service",
+            status=AppStatus.RUNNING,
+            runtime_info=sample_service_app.runtime_info,
+        )
+
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Linux")
+    @patch("latarnia.managers.service_manager.subprocess.run")
+    def test_reconcile_running_units_skips_inactive(
+        self, mock_run, mock_system, service_manager,
+    ):
+        """`inactive` and `failed` units are not reconciled (only active/activating)."""
+        port_manager = MagicMock()
+        service_manager.port_manager = port_manager
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = (
+            "Id=latarnia-dev-app_a.service\nActiveState=inactive\n\n"
+            "Id=latarnia-dev-app_b.service\nActiveState=failed\n\n"
+        )
+        count = service_manager.reconcile_running_units()
+        assert count == 0
+        port_manager.claim_port.assert_not_called()
+
+    @patch("latarnia.managers.service_manager.platform.system", return_value="Darwin")
+    def test_reconcile_running_units_noop_on_macos(self, mock_system, service_manager):
+        """macOS has no systemd; reconciliation is a no-op."""
+        service_manager.port_manager = MagicMock()
+        assert service_manager.reconcile_running_units() == 0
+
+    def test_parse_ports_from_unit(self, service_manager, temp_dirs):
+        """ExecStart line with --port and --mcp-port yields both ints."""
+        unit = temp_dirs["systemd"] / "x.service"
+        unit.write_text(
+            "[Service]\n"
+            "ExecStart=/path/python app.py --port 8101 --mcp-port 9051 "
+            "--data-dir /opt/latarnia/dev/data/x\n"
+            "Environment=ENV=dev\n"
+        )
+        ports = ServiceManager._parse_ports_from_unit(unit)
+        assert ports == {"port": 8101, "mcp_port": 9051}
+
     @patch('subprocess.run')
     def test_get_service_status(self, mock_subprocess, service_manager):
         """Test getting service status"""
