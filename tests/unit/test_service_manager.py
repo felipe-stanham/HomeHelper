@@ -559,10 +559,16 @@ class TestServiceManager:
         assert logs[1] == "Log line 2"
         assert logs[2] == "Log line 3"
         
+        # Query the system journal by _SYSTEMD_USER_UNIT (Pi has no
+        # user-mode persistent journald; --user variant returns nothing).
         mock_subprocess.assert_called_with(
-            ["journalctl", "--user", "-u", "latarnia-dev-test-service.service", "-n", "3", "--no-pager"],
+            [
+                "journalctl",
+                "_SYSTEMD_USER_UNIT=latarnia-dev-test-service.service",
+                "-n", "3", "--no-pager",
+            ],
             capture_output=True,
-            text=True
+            text=True,
         )
     
     @patch('subprocess.run')
