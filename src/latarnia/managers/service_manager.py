@@ -116,6 +116,143 @@ class ServiceManager:
         # use this for ExecStart so systemd does not depend on PATH.
         self.python_executable = sys.executable
 
+    def reconcile_running_units(self) -> int:
+        """Sync the in-memory app registry with surviving per-app systemd units.
+
+        Per-app units have independent lifetimes from the platform (no
+        PartOf coupling). After a platform restart, units may still be
+        active. This method:
+
+          1. Lists `latarnia-{env}-*.service` units that are `active` /
+             `activating`.
+          2. For each, parses the unit file's ExecStart for `--port` and
+             `--mcp-port`.
+          3. Claims those ports in `PortManager` so future allocations
+             don't collide.
+          4. Marks the corresponding app as `RUNNING` in the registry and
+             populates `runtime_info.assigned_port` (and
+             `mcp_info.mcp_port` if applicable).
+
+        Linux only; no-op on non-Linux. Returns the number of apps
+        reconciled.
+        """
+        if platform.system() != "Linux":
+            return 0
+        if self.port_manager is None:
+            self.logger.debug("No PortManager wired; skipping reconciliation")
+            return 0
+
+        try:
+            result = subprocess.run(
+                [
+                    "systemctl", "--user", "show",
+                    "--property=Id,ActiveState",
+                    "--type=service",
+                    f"{self.service_prefix}*.service",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            self.logger.debug("systemctl not available; skipping reconciliation")
+            return 0
+        if result.returncode != 0:
+            self.logger.debug("systemctl show returned %d; skipping", result.returncode)
+            return 0
+
+        active_app_ids: List[str] = []
+        current_id: Optional[str] = None
+        current_active: Optional[str] = None
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                if current_id and current_active in {"active", "activating"}:
+                    if current_id.startswith(self.service_prefix) and current_id.endswith(".service"):
+                        app_id = current_id[len(self.service_prefix):-len(".service")]
+                        active_app_ids.append(app_id)
+                current_id = None
+                current_active = None
+                continue
+            if "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            if key == "Id":
+                current_id = value
+            elif key == "ActiveState":
+                current_active = value
+        if current_id and current_active in {"active", "activating"}:
+            if current_id.startswith(self.service_prefix) and current_id.endswith(".service"):
+                app_id = current_id[len(self.service_prefix):-len(".service")]
+                active_app_ids.append(app_id)
+
+        reconciled = 0
+        for app_id in active_app_ids:
+            unit_path = self.systemd_user_dir / f"{self.service_prefix}{app_id}.service"
+            if not unit_path.exists():
+                self.logger.debug("Active unit %s has no file on disk; skipping", app_id)
+                continue
+            ports = self._parse_ports_from_unit(unit_path)
+            if not ports.get("port"):
+                self.logger.warning(
+                    "Active unit for %s has no --port in ExecStart; cannot reconcile",
+                    app_id,
+                )
+                continue
+
+            app = self.app_manager.registry.get_app(app_id)
+            if app is None:
+                self.logger.warning(
+                    "Active unit for %s but app is not registered; leaving unit alone",
+                    app_id,
+                )
+                continue
+
+            self.port_manager.claim_port(app_id, app.type, ports["port"])
+            app.runtime_info.assigned_port = ports["port"]
+            if ports.get("mcp_port") and app.mcp_info:
+                self.port_manager.claim_mcp_port(app_id, ports["mcp_port"])
+                app.mcp_info.mcp_port = ports["mcp_port"]
+            self.app_manager.registry.update_app(
+                app_id,
+                status=AppStatus.RUNNING,
+                runtime_info=app.runtime_info,
+            )
+            self.logger.info(
+                "Reconciled %s as RUNNING (port=%s, mcp_port=%s)",
+                app_id,
+                ports["port"],
+                ports.get("mcp_port"),
+            )
+            reconciled += 1
+
+        return reconciled
+
+    @staticmethod
+    def _parse_ports_from_unit(unit_path: Path) -> Dict[str, int]:
+        """Parse `--port` and `--mcp-port` from a unit file's ExecStart line."""
+        ports: Dict[str, int] = {}
+        try:
+            text = unit_path.read_text()
+        except OSError:
+            return ports
+        for line in text.splitlines():
+            if not line.startswith("ExecStart="):
+                continue
+            tokens = line.split()
+            for i, tok in enumerate(tokens):
+                if tok == "--port" and i + 1 < len(tokens):
+                    try:
+                        ports["port"] = int(tokens[i + 1])
+                    except ValueError:
+                        pass
+                elif tok == "--mcp-port" and i + 1 < len(tokens):
+                    try:
+                        ports["mcp_port"] = int(tokens[i + 1])
+                    except ValueError:
+                        pass
+            break
+        return ports
+
     def linger_enabled(self, user: Optional[str] = None) -> bool:
         """
         Check whether systemd --user linger is enabled for the given user.
@@ -193,16 +330,14 @@ class ServiceManager:
         if app.manifest.config and app.manifest.config.redis_required:
             cmd_args.extend(["--redis-url", self.config_manager.get_redis_url()])
 
-        # Add optional arguments based on config
+        # Add optional arguments based on config. --logs-dir is no longer
+        # passed: service apps log to stdout/stderr; systemd routes that
+        # to journald (single canonical sink). The `logs_dir` manifest
+        # field is deprecated as of P-0005 Scope 4.
         if app.manifest.config and app.manifest.config.data_dir:
             data_dir = Path(self.config_manager.get_data_dir()) / app_id
             data_dir.mkdir(parents=True, exist_ok=True)
             cmd_args.extend(["--data-dir", str(data_dir)])
-        
-        if app.manifest.config and app.manifest.config.logs_dir:
-            logs_dir = Path(self.config_manager.get_logs_dir()) / app_id
-            logs_dir.mkdir(parents=True, exist_ok=True)
-            cmd_args.extend(["--logs-dir", str(logs_dir)])
 
         # Add database URL hint (actual URL passed via environment variable)
         db_url_env = None
@@ -242,17 +377,19 @@ class ServiceManager:
 
         # Generate service template. Environment=ENV={env} is set so apps
         # reading ENV (and ServiceManager itself if re-entrant) behave
-        # consistently with the main platform unit. PartOf=latarnia-{env}
-        # ensures stopping the main platform also stops its app units.
-        # No User= — these are user-scope units (`systemctl --user`) that
-        # already run as the invoking user; `User=` would be a setresuid
-        # call and fails with status=216/GROUP under user-mode systemd.
-        main_unit = f"latarnia-{self.env}.service"
+        # consistently with the main platform unit.
+        # No PartOf=latarnia-{env}.service: that referenced a system-scope
+        # unit from a user-scope unit, which systemd silently ignores. App
+        # lifetimes are independent of the platform — apps survive a
+        # platform restart, which is the desired robustness story for
+        # P-0005. Reconciliation at startup picks up surviving units.
+        # No User= — user-scope units (`systemctl --user`) already run as
+        # the invoking user; `User=` would be a setresuid call and fails
+        # with status=216/GROUP.
         service_template = f"""[Unit]
 Description=Latarnia Service - {app.manifest.name}
 After=network.target
 Wants=network.target
-PartOf={main_unit}
 
 [Service]
 Type=simple
@@ -611,30 +748,34 @@ Environment=ENV={self.env}
     
     def get_service_logs(self, app_id: str, lines: int = 50) -> List[str]:
         """
-        Get recent log entries for a service via journalctl
-        
-        Args:
-            app_id: Application identifier
-            lines: Number of recent lines to retrieve
-            
-        Returns:
-            List of log lines
+        Get recent log entries for a per-app systemd user unit.
+
+        Queries the system journal (no `--user` flag) by `_SYSTEMD_USER_UNIT`
+        rather than `journalctl --user -u`, because user-mode persistent
+        journald is not enabled by default on Raspberry Pi OS — without
+        persistent storage `journalctl --user` returns "No journal files".
+        The system journal always retains user-unit logs and is readable
+        by the unit's own user without sudo.
         """
         try:
             service_name = f"{self.service_prefix}{app_id}.service"
-            
+
             result = subprocess.run(
-                ["journalctl", "--user", "-u", service_name, "-n", str(lines), "--no-pager"],
+                [
+                    "journalctl",
+                    f"_SYSTEMD_USER_UNIT={service_name}",
+                    "-n", str(lines),
+                    "--no-pager",
+                ],
                 capture_output=True,
-                text=True
+                text=True,
             )
-            
+
             if result.returncode == 0:
                 return result.stdout.strip().split('\n') if result.stdout.strip() else []
-            else:
-                self.logger.error(f"Failed to get logs for app {app_id}: {result.stderr}")
-                return []
-                
+            self.logger.error(f"Failed to get logs for app {app_id}: {result.stderr}")
+            return []
+
         except Exception as e:
             self.logger.error(f"Failed to get logs for app {app_id}: {e}")
             return []

@@ -92,21 +92,34 @@ async def lifespan(app: FastAPI):
     logger.info("Discovering applications...")
     discovered_count = app_manager.discover_apps()
     logger.info(f"Discovered {discovered_count} applications")
-    
+
+    # Reconcile the registry with surviving per-app systemd units (Linux
+    # only). Per-app units have independent lifetimes, so they typically
+    # survive a platform restart. Without this step the dashboard shows
+    # them as "stopped" and HealthMonitor skips them.
+    reconciled = service_manager.reconcile_running_units()
+    if reconciled:
+        logger.info(f"Reconciled {reconciled} already-running service apps")
+
     # Auto-start service apps with auto_start=true. The launcher is chosen
     # per-app (OS, type) by pick_launcher: Linux+service → systemd, Darwin →
-    # subprocess fallback.
+    # subprocess fallback. Apps already RUNNING (reconciled above) are
+    # skipped — their unit/process is already up.
     logger.info("Auto-starting service apps...")
     auto_start_count = 0
     for app_entry in app_manager.registry.get_all_apps():
-        if app_entry.type == "service" and app_entry.manifest.config.auto_start:
-            logger.info(f"Auto-starting service app: {app_entry.name} ({app_entry.app_id})")
-            launcher = pick_launcher(app_entry)
-            if launcher.start_service(app_entry.app_id):
-                auto_start_count += 1
-                logger.info(f"Successfully started {app_entry.name}")
-            else:
-                logger.error(f"Failed to start {app_entry.name}")
+        if app_entry.type != AppType.SERVICE or not app_entry.manifest.config.auto_start:
+            continue
+        if app_entry.status == AppStatus.RUNNING:
+            logger.info(f"Skipping auto-start of {app_entry.name}: already running (reconciled)")
+            continue
+        logger.info(f"Auto-starting service app: {app_entry.name} ({app_entry.app_id})")
+        launcher = pick_launcher(app_entry)
+        if launcher.start_service(app_entry.app_id):
+            auto_start_count += 1
+            logger.info(f"Successfully started {app_entry.name}")
+        else:
+            logger.error(f"Failed to start {app_entry.name}")
     logger.info(f"Auto-started {auto_start_count} service apps")
 
     # Initialize MCP gateway if enabled
@@ -165,7 +178,7 @@ event_subscriber = RedisEventSubscriber(
 )
 
 # Initialize app management components
-from .managers import AppManager, PortManager, ServiceManager
+from .managers import AppManager, AppStatus, AppType, PortManager, ServiceManager
 from .managers.health_monitor import HealthMonitor
 from .managers.subprocess_launcher import SubprocessLauncher
 from .managers.streamlit_manager import StreamlitManager
@@ -657,39 +670,59 @@ async def get_service_logs(app_id: str, lines: int = 50):
 
 @app.get("/api/apps/{app_id}/logs")
 async def get_app_logs(app_id: str, lines: int = 100):
-    """Get recent logs for an app from log files (cross-platform)"""
+    """Get recent logs for an app.
+
+    Dispatches by (OS, app type) — single canonical source per app
+    (P-0005 Scope 4):
+      - Linux + service app → journald via `service_manager.get_service_logs`.
+      - Darwin + service app → SubprocessLauncher's stdout-redirect file.
+      - Streamlit (any OS) → StreamlitManager's per-app log file.
+    """
     try:
+        import platform as _platform
         from pathlib import Path
-        
-        # Check for app-specific log file
+
+        app = app_manager.registry.get_app(app_id)
+        if not app:
+            raise HTTPException(status_code=404, detail=f"App {app_id} not found")
+
+        # Service apps on Linux: journald is the canonical sink.
+        if app.type == "service" and _platform.system() == "Linux":
+            log_lines = service_manager.get_service_logs(app_id, lines)
+            if not log_lines:
+                return {"success": True, "data": {
+                    "logs": [], "lines": 0, "source": "journald",
+                    "message": "No journal entries (unit may not have started yet)"
+                }}
+            return {"success": True, "data": {
+                "logs": log_lines, "lines": len(log_lines), "source": "journald",
+            }}
+
+        # Darwin service or Streamlit: read the launcher's redirected file.
         logs_dir = config_manager.get_logs_dir()
-        
-        # Try different log file patterns
-        log_files = [
-            logs_dir / f"{app_id}.log",
-            logs_dir / f"{app_id}-streamlit.log",
-            logs_dir / f"latarnia-{app_id}.log"
+        candidates = [
+            logs_dir / f"{app_id}.log",            # SubprocessLauncher (Darwin)
+            logs_dir / f"{app_id}-streamlit.log",  # StreamlitManager
         ]
-        
-        log_lines = []
-        for log_file in log_files:
+        for log_file in candidates:
             if log_file.exists():
-                try:
-                    with open(log_file, 'r') as f:
-                        all_lines = f.readlines()
-                        # Get last N lines
-                        log_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
-                        # Strip newlines
-                        log_lines = [line.rstrip('\n') for line in log_lines]
-                        break
-                except Exception as e:
-                    logger.error(f"Failed to read log file {log_file}: {e}")
-        
-        if not log_lines:
-            # No log file found, return empty
-            return {"success": True, "data": {"logs": [], "lines": 0, "message": "No log file found"}}
-        
-        return {"success": True, "data": {"logs": log_lines, "lines": len(log_lines)}}
+                with open(log_file, "r") as f:
+                    all_lines = f.readlines()
+                trimmed = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                return {"success": True, "data": {
+                    "logs": [ln.rstrip("\n") for ln in trimmed],
+                    "lines": len(trimmed),
+                    "source": "file",
+                    "file": str(log_file),
+                }}
+
+        return {"success": True, "data": {
+            "logs": [], "lines": 0, "source": "none",
+            "message": "No log source available for this app"
+        }}
+
+    except HTTPException:
+        raise
         
     except Exception as e:
         logger.error(f"Failed to get logs for app {app_id}: {e}")
