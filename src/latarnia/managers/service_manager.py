@@ -748,30 +748,34 @@ Environment=ENV={self.env}
     
     def get_service_logs(self, app_id: str, lines: int = 50) -> List[str]:
         """
-        Get recent log entries for a service via journalctl
-        
-        Args:
-            app_id: Application identifier
-            lines: Number of recent lines to retrieve
-            
-        Returns:
-            List of log lines
+        Get recent log entries for a per-app systemd user unit.
+
+        Queries the system journal (no `--user` flag) by `_SYSTEMD_USER_UNIT`
+        rather than `journalctl --user -u`, because user-mode persistent
+        journald is not enabled by default on Raspberry Pi OS — without
+        persistent storage `journalctl --user` returns "No journal files".
+        The system journal always retains user-unit logs and is readable
+        by the unit's own user without sudo.
         """
         try:
             service_name = f"{self.service_prefix}{app_id}.service"
-            
+
             result = subprocess.run(
-                ["journalctl", "--user", "-u", service_name, "-n", str(lines), "--no-pager"],
+                [
+                    "journalctl",
+                    f"_SYSTEMD_USER_UNIT={service_name}",
+                    "-n", str(lines),
+                    "--no-pager",
+                ],
                 capture_output=True,
-                text=True
+                text=True,
             )
-            
+
             if result.returncode == 0:
                 return result.stdout.strip().split('\n') if result.stdout.strip() else []
-            else:
-                self.logger.error(f"Failed to get logs for app {app_id}: {result.stderr}")
-                return []
-                
+            self.logger.error(f"Failed to get logs for app {app_id}: {result.stderr}")
+            return []
+
         except Exception as e:
             self.logger.error(f"Failed to get logs for app {app_id}: {e}")
             return []
