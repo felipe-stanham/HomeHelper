@@ -95,11 +95,12 @@ class SubprocessLauncher:
                 data_dir.mkdir(parents=True, exist_ok=True)
                 cmd.extend(["--data-dir", str(data_dir)])
 
-            # Add logs dir if required
-            if app.manifest.config.logs_dir:
-                logs_dir = self.config_manager.get_logs_dir()
-                logs_dir.mkdir(parents=True, exist_ok=True)
-                cmd.extend(["--logs-dir", str(logs_dir)])
+            # No --logs-dir: apps log to stdout/stderr. On macOS we still
+            # capture stdout/stderr to a file via Popen below so the
+            # dashboard's /api/apps/{id}/logs endpoint can read it.
+            # The `logs_dir` manifest field is deprecated as of P-0005
+            # Scope 4; logs canonical sink is journald (Linux) /
+            # subprocess log file (Darwin).
 
             # Build environment for subprocess
             proc_env = dict(os.environ)

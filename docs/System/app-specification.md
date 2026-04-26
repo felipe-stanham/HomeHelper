@@ -7,10 +7,12 @@ This specification defines the requirements for apps that integrate with the Lat
 ## App Types
 
 ### Service Apps
-- **Lifecycle**: Managed by systemd, controlled by main app
+- **Lifecycle**: On Linux, launched as a per-app systemd user unit (`latarnia-{env}-{app}.service`); on macOS dev, launched as a subprocess child of the platform. The choice is made by the platform (P-0005); apps are unaware.
 - **Port Assignment**: Dynamically assigned by main app via `--port` parameter
-- **Requirements**: Must implement required API endpoints
+- **Requirements**: Must implement required API endpoints, handle SIGTERM cleanly, and write logs to stdout/stderr (Latarnia routes them to journald on Linux).
 - **Startup Command**: `python app.py --port {assigned_port} [--mcp-port {mcp_port}]`
+- **Crash recovery**: systemd respawns failed processes per the unit's `Restart=` policy (default `on-failure`, configurable via `config.restart_policy`).
+- **Log location**: `journalctl --user -u latarnia-{env}-{app}.service` on Linux. The dashboard's logs panel queries this automatically.
 
 ### Streamlit Apps
 - **Lifecycle**: Started on-demand when user opens UI, single instance only
@@ -43,7 +45,6 @@ Each app must include a `latarnia.json` file in its root directory:
     "redis_required": true,
     "database": true,
     "mcp_server": true,
-    "logs_dir": true,
     "data_dir": true,
     "auto_start": true,
     "restart_policy": "always",
@@ -78,7 +79,7 @@ Each app must include a `latarnia.json` file in its root directory:
 - **config.redis_required**: Boolean, if app needs Redis (default: false)
 - **config.database**: Boolean, if app needs a dedicated Postgres database (default: false). When true, the platform provisions an isolated database and passes `--db-url` at launch.
 - **config.mcp_server**: Boolean, if app exposes an MCP server (default: false). The platform dynamically allocates an MCP port and passes it via `--mcp-port` at launch. The app must accept this CLI argument and start its MCP server on the given port.
-- **config.logs_dir**: Boolean, if app receives the logs_dir argument (default: false)
+- **config.logs_dir**: *Deprecated as of P-0005 Scope 4.* The field still parses for backward compat but is ignored — no `--logs-dir` CLI argument is passed. Apps should log to stdout/stderr; the platform routes that to journald (Linux) or to a subprocess log file (Darwin dev).
 - **config.data_dir**: Boolean, if app receives the data_dir argument (default: false)
 - **config.auto_start**: Boolean, start on main app startup (default: false)
 - **config.restart_policy**: `"always"`, `"on-failure"`, `"never"` (default: "always")
@@ -469,74 +470,64 @@ with open(config_file, 'r') as f:
     config = json.load(f)
 ```
 
-### Logs Directory (`--logs-dir`)
-**Purpose**: Store application logs for debugging and monitoring
+### Logs (no `--logs-dir`; log to stdout/stderr)
 
-**Path Format**: `/opt/latarnia/logs/{app_name}/`
+As of **P-0005 Scope 4**, apps no longer receive a `--logs-dir` argument. Apps log to **stdout/stderr** and the platform routes the streams:
 
-**Use Cases**:
-- Application logs
-- Error logs
-- Debug traces
-- Audit logs
-- Performance metrics
+- **Linux** (per-app systemd user units): stdout/stderr → journald. Query with `journalctl --user -u latarnia-{env}-{app}.service`.
+- **macOS dev** (subprocess fallback): stdout/stderr → file at `/opt/latarnia/{env}/logs/{app_id}.log` (managed by `SubprocessLauncher`; the app does nothing).
+
+The dashboard's log panel queries `/api/apps/{app_id}/logs`, which dispatches to the right source automatically — apps don't need to know which OS they're on.
 
 **Python Example**:
 ```python
 import argparse
 import logging
-from pathlib import Path
-from datetime import datetime
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--logs-dir', type=str, required=True)
+parser.add_argument('--port', type=int, required=True)
 args = parser.parse_args()
 
-logs_dir = Path(args.logs_dir) / "camera_detection"
-logs_dir.mkdir(parents=True, exist_ok=True)
-
-# Setup logging
-log_file = logs_dir / f"app_{datetime.now().strftime('%Y%m%d')}.log"
+# Stdout-only logging. Latarnia handles capture.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()  # Also log to console
-    ]
+    handlers=[logging.StreamHandler()],
 )
-
 logger = logging.getLogger(__name__)
-logger.info("Application started")
+logger.info("Application started on port %d", args.port)
 ```
 
 ### Directory Management
-- Directories are created by Latarnia during app installation
-- Apps should create subdirectories as needed
-- Apps must handle missing directories gracefully
-- Do not hardcode paths - always use provided arguments
-- Implement log rotation to prevent disk space issues
+- The data directory is created by Latarnia and passed via `--data-dir`.
+- Apps should create subdirectories under it as needed.
+- Apps must handle missing directories gracefully.
+- Do not hardcode paths — always use provided arguments.
+- Do not implement file-based log rotation; journald handles retention by size/time.
 
 ## Configuration Integration
 
 ### Configuration sent via run parameters
-The main app will ALWAYS send the port to the app
+The main app will ALWAYS send the port to the app:
 - `port` or `server.port`: Integer, port number
 
-If enabled in the config, the following parameters will be also sent to the app:
+If enabled in the manifest config, the following are also passed:
 
-- `redis-url`: Redis connection string
-- `data-dir`: Data directory path
-- `logs-dir`: Logs directory path
+- `redis-url`: Redis connection string (when `redis_required: true`)
+- `mcp-port`: MCP server port (when `mcp_server: true`)
+- `data-dir`: Data directory path (when `data_dir: true`)
+- `db-url`: Database connection URL (when `database: true`)
 
-**example Service app use**
+> **Removed**: `--logs-dir` (deprecated in P-0005 Scope 4). Log to stdout/stderr.
+
+**Example Service app use**:
 ```bash
-python main.py --port 8101 --redis-url redis://localhost:6379 --data-dir /opt/latarnia/data --logs-dir /opt/latarnia/logs
+python main.py --port 8101 --redis-url redis://localhost:6379 --data-dir /opt/latarnia/{env}/data/{app_id}
 ```
 
-**example Streamlit app use**
+**Example Streamlit app use**:
 ```bash
-streamlit run app.py --server.port 8501 --redis-url redis://localhost:6379 --data-dir /opt/latarnia/data --logs-dir /opt/latarnia/logs
+streamlit run app.py --server.port 8501 --redis-url redis://localhost:6379 --data-dir /opt/latarnia/{env}/data/{app_id}
 ```
 
 ## Environment Variables

@@ -46,7 +46,9 @@ class AppConfig(BaseModel):
     redis_required: bool = False
     database: bool = False
     mcp_server: bool = False
-    logs_dir: bool = False
+    logs_dir: bool = False  # deprecated (P-0005 Scope 4): ignored. Apps log
+                            # to stdout/stderr → journald (Linux) or to the
+                            # subprocess log file (Darwin).
     data_dir: bool = False
     auto_start: bool = False
     restart_policy: str = Field(default="on-failure", pattern=r'^(always|on-failure|never)$')

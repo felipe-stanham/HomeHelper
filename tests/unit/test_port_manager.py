@@ -394,6 +394,25 @@ class TestPortManager:
         port_manager.release_mcp_port("test-app")
         assert port_manager.get_app_mcp_port("test-app") is None
 
+    def test_claim_port_records_allocation_without_availability_check(self, port_manager):
+        """claim_port reserves a specific port even if it's already in use
+        externally (the reconciliation use case — the platform's per-app
+        unit is the one using it)."""
+        # Don't bother mocking socket — claim_port skips availability checks.
+        port = port_manager.claim_port("reconciled-app", "service", 8123)
+        assert port == 8123
+        assert port_manager.app_ports["reconciled-app"] == 8123
+        assert 8123 in port_manager.allocations
+        assert port_manager.allocations[8123].app_id == "reconciled-app"
+        assert port_manager.allocations[8123].app_type == "service"
+
+    def test_claim_mcp_port_records_allocation(self, port_manager):
+        """claim_mcp_port mirrors claim_port for MCP allocations."""
+        port = port_manager.claim_mcp_port("reconciled-app", 9012)
+        assert port == 9012
+        assert port_manager.app_mcp_ports["reconciled-app"] == 9012
+        assert 9012 in port_manager.mcp_allocations
+
     @patch('socket.socket')
     def test_port_statistics_includes_mcp(self, mock_socket, port_manager):
         """Test that port statistics include MCP port counts"""
