@@ -295,52 +295,50 @@ Tool index key format: `"{app_name}.{tool_name}"` — no nesting beyond one leve
 
 ## File System Structure
 
-### Configuration Files
+Paths are env-scoped (P-0004): the same Pi runs `tst` and `prd` side-by-side under `/opt/latarnia/{env}/` with no shared mutable state.
+
+### Per-environment layout
 ```
-/opt/latarnia/config/
-├── config.json                 # Main configuration
-├── config.backup.json          # Configuration backup
-└── .env                        # Environment overrides (optional)
+/opt/latarnia/{env}/                   # env ∈ {tst, prd}
+├── .venv/                             # Python venv (one per env, used by main + per-app units)
+├── src/                               # Platform source (git checkout)
+├── apps/                              # Discovered apps (deploy-time copy of examples/, plus real apps in PRD)
+│   └── {app_id}/
+│       ├── latarnia.json
+│       ├── app.py
+│       ├── requirements.txt
+│       └── migrations/                # Optional, for apps with database: true
+├── data/
+│   └── {app_id}/                      # Per-app data dir; passed via --data-dir
+└── logs/
+    └── {app_id}.log                   # macOS dev only (SubprocessLauncher Popen redirect)
+    └── {app_id}-streamlit.log         # Streamlit apps (per-streamlit subprocess redirect)
 ```
 
-### App Registry Persistence
+### Per-user systemd state (Linux only)
 ```
-/opt/latarnia/registry/
-├── apps.json                   # App registry data
-├── ports.json                  # Port allocation tracking
-└── history/                    # Registry change history
-    ├── 2024-01-01.json
-    └── 2024-01-02.json
+~felipe/.config/systemd/user/
+├── latarnia-tst-{app_id}.service      # Generated at runtime by ServiceManager
+└── latarnia-prd-{app_id}.service
 ```
 
-### Application Data Structure
+### Platform main-unit (system-scope)
 ```
-/opt/latarnia/data/
-├── app-name-1/                 # Per-app data directory
-│   ├── config/                 # App-specific configuration
-│   ├── database/               # App database files
-│   ├── uploads/                # File uploads
-│   └── cache/                  # Temporary cache files
-└── app-name-2/
-    └── ...
+/etc/systemd/system/
+├── latarnia-tst.service               # Installed once at bootstrap (see deployment skill)
+└── latarnia-prd.service
 ```
 
-### Logging Structure
-```
-/opt/latarnia/logs/
-├── latarnia/                 # Main application logs
-│   ├── main.log
-│   ├── main.log.1
-│   └── main.log.2
-├── app-name-1/                 # Per-app logs
-│   ├── app.log
-│   ├── error.log
-│   └── access.log
-└── system/                     # System-level logs
-    ├── discovery.log
-    ├── health.log
-    └── performance.log
-```
+### Logs
+
+- **Service apps on Linux**: stdout/stderr → systemd journal (queryable with `journalctl _SYSTEMD_USER_UNIT=latarnia-{env}-{app_id}.service`). No per-app log files on disk.
+- **Service apps on macOS dev**: stdout/stderr → `logs/{app_id}.log` (SubprocessLauncher Popen redirect).
+- **Streamlit apps (any OS)**: stdout/stderr → `logs/{app_id}-streamlit.log` (StreamlitManager Popen redirect).
+- **Platform main process**: still writes `latarnia-main.log` under `logs/` (legacy; not env-scoped per app since the main unit is the only writer).
+
+### Registry
+
+There is **no on-disk registry**. `AppRegistry` is rebuilt on every platform start by `discover_apps()` scanning `apps/`, plus reconciliation against any surviving `latarnia-{env}-*.service` user units (P-0005 Scope 4). Port allocations are also in-memory only.
 
 ## Redis Data Structures
 
@@ -454,27 +452,33 @@ latarnia:streams:{declared_name}   # Stream key (e.g. latarnia:streams:crm.conta
 
 ## Backup and Recovery
 
-### Automatic Backups
-- Configuration: On every change
-- App registry: Daily snapshots
-- System state: Redis persistence (RDB)
+There is no automatic backup loop today. App registry and port allocations are in-memory and rebuilt on platform start (no backup needed). What's worth backing up:
+
+| Source | Notes |
+|---|---|
+| **Per-env `data/{app_id}/`** | App-managed persistent state (manifest sets `data_dir: true`). Single rsync target per env. |
+| **Postgres per-app DBs** | Provisioned by `db_provisioner.py`; one DB per app that declares `database: true`. `pg_dump` per DB; the registry knows the DB names. |
+| **Redis** | RDB / AOF as configured on the host. The platform doesn't manage Redis lifecycle. |
+| **`/etc/systemd/system/latarnia-{env}.service`** | Bootstrap artefact, installed manually per host. Not env-data. |
+
+A platform-managed centralized backup loop (per-app data + per-app DBs, driven by the manifest) is a candidate for a future scope; nothing automates it today.
 
 ### Manual Backup Procedures
 ```bash
-# Backup configuration
-cp /opt/latarnia/config/config.json /backup/config-$(date +%Y%m%d).json
+# Per-env app data (rsync target)
+rsync -a /opt/latarnia/{env}/data/ /backup/{env}-data-$(date +%Y%m%d)/
 
-# Backup app registry
-cp /opt/latarnia/registry/apps.json /backup/registry-$(date +%Y%m%d).json
+# Per-app Postgres dump (iterate the registry — one DB per app with database:true)
+pg_dump -h localhost -U superuser {env}_latarnia_{app_id} > /backup/{env}-{app_id}-$(date +%Y%m%d).sql
 
-# Backup Redis data
+# Redis (host-level, both envs share the same instance)
 redis-cli BGSAVE
 cp /var/lib/redis/dump.rdb /backup/redis-$(date +%Y%m%d).rdb
 ```
 
 ### Recovery Procedures
-1. Stop Latarnia services
-2. Restore configuration and registry files
-3. Restore Redis data if needed
-4. Restart services
+1. `sudo systemctl stop latarnia-{env}.service`
+2. Restore the per-env `data/` directory.
+3. Restore per-app Postgres DBs (`psql ... < dump.sql`).
+4. `sudo systemctl start latarnia-{env}.service` — discovery + reconciliation runs automatically.
 5. Verify app discovery and status
