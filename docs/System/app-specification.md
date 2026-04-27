@@ -53,7 +53,7 @@ Each app must include a `latarnia.json` file in its root directory:
   },
   "install": {
     "setup_commands": [
-      "mkdir -p /opt/latarnia/data/camera_detection"
+      "mkdir -p /opt/latarnia/${ENV}/data/camera_detection"
     ]
   },
   "requires": [
@@ -82,7 +82,7 @@ Each app must include a `latarnia.json` file in its root directory:
 - **config.logs_dir**: *Deprecated as of P-0005 Scope 4.* The field still parses for backward compat but is ignored — no `--logs-dir` CLI argument is passed. Apps should log to stdout/stderr; the platform routes that to journald (Linux) or to a subprocess log file (Darwin dev).
 - **config.data_dir**: Boolean, if app receives the data_dir argument (default: false)
 - **config.auto_start**: Boolean, start on main app startup (default: false)
-- **config.restart_policy**: `"always"`, `"on-failure"`, `"never"` (default: "always")
+- **config.restart_policy**: `"always"`, `"on-failure"`, `"never"` (default: `"on-failure"` since P-0005 Scope 1). `"never"` maps to systemd's `Restart=no` in the generated unit.
 - **config.redis_streams_publish**: Array of stream names this app publishes to (default: []). Each stream can have at most one publisher.
 - **config.redis_streams_subscribe**: Array of stream names this app subscribes to (default: []). Consumer groups are created per subscribing app.
 - **install.setup_commands**: Shell commands to run during installation
@@ -437,7 +437,7 @@ Latarnia provides dedicated directories for each app to store persistent data an
 ### Data Directory (`--data-dir`)
 **Purpose**: Store persistent application data that needs to survive app restarts
 
-**Path Format**: `/opt/latarnia/data/{app_name}/`
+**Path Format**: `/opt/latarnia/{env}/data/{app_id}/` — env-scoped (P-0004) so TST and PRD apps don't share a directory.
 
 **Use Cases**:
 - Database files (SQLite, JSON, etc.)
@@ -554,32 +554,58 @@ Apps can access these environment variables set by Latarnia:
 
 ## Service Management
 
-### Systemd Service Template (Service Apps)
+App authors don't write systemd unit files — `ServiceManager` generates one per service app at launch on Linux. The shape is informational; you only need to know the contract (CLI flags, stdout logging, SIGTERM).
+
+### Generated Unit Shape (informational)
+
+The platform writes per-app units under `~felipe/.config/systemd/user/latarnia-{env}-{app_id}.service`:
+
 ```ini
 [Unit]
-Description=Latarnia - {app_name}
-After=latarnia-main.service
-Requires=latarnia-main.service  
-PartOf=latarnia-main.service
+Description=Latarnia Service - {app_name}
+After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
-User=latarnia
-WorkingDirectory=/opt/latarnia/apps/{app_name}
-ExecStart=/usr/bin/python3 main.py --port {assigned_port}
-Restart={restart_policy}
-Environment=LATARNIA_CONFIG_PATH=/etc/latarnia/config.yaml
-Environment=REDIS_URL=redis://localhost:6379
+WorkingDirectory=/opt/latarnia/{env}/apps/{app_id}
+ExecStart=/opt/latarnia/{env}/.venv/bin/python {main_file} --port {port} [--mcp-port {mcp_port}] [--redis-url {url}] [--data-dir {dir}] [--db-url env:DATABASE_URL]
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=latarnia-{env}-{app_id}
+Environment=ENV={env}
+Environment=REDIS_HOST=...
+Environment=REDIS_PORT=...
+Environment=DATABASE_URL=postgresql://...
 
 [Install]
-WantedBy=latarnia-main.service
+WantedBy=default.target
 ```
 
+Notes:
+- **User-scope** unit (`systemctl --user`); no `User=` directive — the unit runs as the invoking user (felipe) by virtue of being user-scope.
+- **No `PartOf=`** — apps have independent lifetimes from the main platform and survive a `latarnia-{env}.service` restart. Reconciled at the next platform start.
+- **`Restart=on-failure`** by default (P-0005); overridable via `manifest.config.restart_policy` (`always` / `on-failure` / `never` → systemd's `no`).
+- `Environment=ENV={env}` is set so the app and the platform agree on the environment.
+- The platform reads `manifest.config.redis_required`, `data_dir`, `mcp_server`, `database` to decide which CLI flags / `Environment=` lines to add.
+
 ### Lifecycle Management
-- **Start**: `systemctl start latarnia-{app_name}`
-- **Stop**: `systemctl stop latarnia-{app_name}`
-- **Status**: `systemctl status latarnia-{app_name}`
-- **Logs**: `journalctl -u latarnia-{app_name} -f`
+
+Generated units are user-scope; lifecycle commands need `--user`:
+
+- **Start**: `systemctl --user start latarnia-{env}-{app_id}.service`
+- **Stop**: `systemctl --user stop latarnia-{env}-{app_id}.service`
+- **Restart**: `systemctl --user restart latarnia-{env}-{app_id}.service`
+- **Status**: `systemctl --user status latarnia-{env}-{app_id}.service`
+- **Logs**: `journalctl _SYSTEMD_USER_UNIT=latarnia-{env}-{app_id}.service -f` (queries the system journal — Pi has no persistent user-mode journald)
+
+In practice you don't run these by hand — use the dashboard's per-app start/stop/restart buttons or `POST /api/apps/{id}/process/{action}`. macOS dev uses `SubprocessLauncher` (Popen fork) instead of systemd; the same dashboard endpoints work transparently.
+
+### macOS dev fallback
+
+On macOS, `SubprocessLauncher` (the renamed `MacOSProcessManager`, P-0005 Scope 2) launches service apps as Popen children of the platform. Same CLI flags, same SIGTERM handling, same dashboard endpoints — just no crash recovery and no journald. Acceptable for local dev only.
 
 ## Complete Working Example
 
@@ -988,7 +1014,7 @@ if __name__ == "__main__":
 - The platform does **not** implement the MCP server for the app.
 - The platform does **not** validate MCP tool schemas or responses.
 - The platform does **not** support stdio-based MCP transport.
-- The platform does **not** proxy MCP requests to the app (that is the MCP gateway's responsibility in a separate scope).
+- The platform does **not** proxy MCP requests to the app directly. The **MCP Gateway** (`src/latarnia/managers/mcp_gateway.py`, shipped in P-0002) aggregates tools from all healthy MCP-enabled apps into a single SSE endpoint at `/mcp/sse`. External AI clients connect to the gateway, not to individual apps. Apps don't need to know about the gateway — they just expose their MCP server on the assigned `--mcp-port` and the gateway discovers it.
 
 ### Testing Your MCP Server
 
@@ -1153,14 +1179,17 @@ Two example apps are provided in the `examples/` directory:
 Minimal service app that serves as a dependency target. Contains only a `/health` endpoint.
 
 ### example_full_app
-Full-featured service app demonstrating all P-0002 capabilities:
-- `latarnia.json` with all new fields (database, mcp_server, has_web_ui, redis_streams, requires)
-- `migrations/` directory with 3 SQL migration files
-- MCP server exposing 3 tools (list_items, add_item, get_status)
-- Web UI (HTML page served by FastAPI at `/`)
-- Redis Streams publisher (example.events.created) and subscriber (example.commands.process)
-- REST API with `/health`, `/ui`, `/api/items`, `/api/events`
-- Depends on `example_companion` >= 1.0.0
+Full-featured service app demonstrating every platform capability:
+- `latarnia.json` with all manifest fields (database, mcp_server, has_web_ui, redis_streams, requires).
+- `migrations/` directory with 3 SQL migration files.
+- MCP server exposing 3 tools (list_items, add_item, get_status); discoverable via the platform's MCP gateway.
+- Web UI (HTML page served by FastAPI at `/`); accessed through the platform's reverse proxy at `/apps/example_full_app/`.
+- Redis Streams publisher (`example.events.created`) and subscriber (`example.commands.process`).
+- REST API with `/health`, `/ui`, `/api/items`, `/api/events`.
+- Depends on `example_companion` >= 1.0.0.
+- Stdout-only logging (P-0005 Scope 4); platform routes stdout to journald on Linux.
+
+This is the **integration-test fixture** — when a platform feature changes, `example_full_app` must be updated to exercise it (see `MEMORY.md`).
 
 To use the example apps, copy them to the `apps/` directory (companion first, then full app).
 
