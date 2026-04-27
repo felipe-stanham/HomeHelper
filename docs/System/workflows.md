@@ -22,13 +22,21 @@ flowchart TD
     Discover --> LingerCheck{Linux?}
     LingerCheck -- Yes --> CheckLinger{linger_enabled?}
     CheckLinger -- No --> WarnLinger[WARNING: linger disabled<br/>sudo loginctl enable-linger]
-    CheckLinger -- Yes --> Loop
-    WarnLinger --> Loop
+    CheckLinger -- Yes --> Reconcile[ServiceManager.reconcile_running_units<br/>find active/activating latarnia-env-*.service units]
+    WarnLinger --> Reconcile
+    Reconcile --> ReconcileLoop{Next active unit?}
+    ReconcileLoop -- Found --> ParseUnit[Parse --port and --mcp-port<br/>from ExecStart line]
+    ParseUnit --> ClaimPorts[claim_port / claim_mcp_port<br/>in PortManager]
+    ClaimPorts --> MarkRunning[Mark app RUNNING in registry<br/>populate runtime_info.assigned_port<br/>and mcp_info.mcp_port]
+    MarkRunning --> ReconcileLoop
+    ReconcileLoop -- Done --> Loop
     LingerCheck -- No --> Loop
 
     Loop{More apps<br/>to check?}
     Loop -- Yes --> AutoCheck{Service app with<br/>auto_start = true?}
-    AutoCheck -- Yes --> PickLauncher[pick_launcher<br/>os + type → launcher]
+    AutoCheck -- Yes --> AlreadyRunning{Already RUNNING<br/>from reconcile?}
+    AlreadyRunning -- Yes --> Loop
+    AlreadyRunning -- No --> PickLauncher[pick_launcher<br/>os + type → launcher]
     PickLauncher --> StartApp[launcher.start_service]
     AutoCheck -- No --> Loop
     StartApp --> Loop

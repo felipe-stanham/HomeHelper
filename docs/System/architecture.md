@@ -122,10 +122,11 @@ graph TB
   - Per-app unit file generation (`~/.config/systemd/user/latarnia-{env}-{app}.service`)
   - `ExecStart` uses absolute venv Python (`sys.executable`); `Environment=ENV={env}` injected
   - Default `Restart=on-failure` / `RestartSec=5`; overridable via `manifest.config.restart_policy`
-  - `PartOf=latarnia-{env}.service` so stopping the main platform cascades to app units
+  - Units have **independent lifetimes** from the platform (no `PartOf=`): apps survive a platform restart, which is the desired robustness story
   - `linger_enabled()` helper — shells out to `loginctl` on Linux; startup emits `WARNING` if linger is off
+  - `reconcile_running_units()` — called during `lifespan()` after discovery on Linux; finds units already `active`/`activating`, parses their `--port` and `--mcp-port` from `ExecStart`, claims those ports in `PortManager`, and marks the app `RUNNING` in the registry so the auto-start loop skips it
   - Service start/stop/restart operations via `systemctl --user`
-  - Health check polling; log access via journalctl
+  - Log access via `journalctl _SYSTEMD_USER_UNIT=latarnia-{env}-{app}.service` (system journal; no `--user` flag, as the Pi has no persistent user-mode journald)
 
 ### 5. Subprocess Launcher
 - **Purpose**: macOS-only fallback launcher; spawns service apps as direct `Popen` children of the platform
@@ -210,7 +211,7 @@ graph LR
         systemd[systemd Service]
         Redis[Redis Pub/Sub]
         Storage[/opt/latarnia/data/app-name/]
-        Logs[/opt/latarnia/logs/app-name/]
+        Journal[journald<br/>system journal]
     end
     
     Main --> Health
@@ -224,7 +225,7 @@ graph LR
     
     Main --> Redis
     Main --> Storage
-    Main --> Logs
+    Main -->|stdout/stderr| Journal
 ```
 
 ### Streamlit Apps
@@ -268,6 +269,18 @@ graph LR
     App --> Storage
     App --> Logs
 ```
+
+## Log Access Dispatch
+
+The `/api/apps/{id}/logs` endpoint selects the log source based on `(OS, app type)`:
+
+| OS | Type | Source |
+|----|------|--------|
+| Linux | service | `journalctl _SYSTEMD_USER_UNIT=latarnia-{env}-{app}.service` (system journal, no `--user`) |
+| Darwin | service | SubprocessLauncher stdout-redirect file (`logs_dir/{app_id}.log`) |
+| Any | streamlit | StreamlitManager stdout-redirect file (`logs_dir/{app_id}-streamlit.log`) |
+
+Apps log to stdout/stderr only; they no longer receive a `--logs-dir` flag. The `config.logs_dir` manifest field is deprecated (kept for backward compatibility, ignored at runtime).
 
 ## Data Flow
 
@@ -443,7 +456,9 @@ systemd --user units (per-app, generated at runtime):
 ├── latarnia-tst-{app}.service   (TST env apps)
 └── latarnia-prd-{app}.service   (PRD env apps)
 Each unit: ExecStart=<venv>/bin/python, Restart=on-failure, RestartSec=5
-           Environment=ENV={env}, PartOf=latarnia-{env}.service
+           Environment=ENV={env}
+           (No PartOf= — units have independent lifetimes from the platform)
+Logs: journalctl _SYSTEMD_USER_UNIT=latarnia-{env}-{app}.service (system journal)
 Prerequisite: sudo loginctl enable-linger {user}
 ```
 
