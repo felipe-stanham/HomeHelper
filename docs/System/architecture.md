@@ -208,9 +208,9 @@ graph LR
     end
     
     subgraph "System Integration"
-        systemd[systemd Service]
+        systemd[systemd user unit<br/>latarnia-{env}-{app_id}.service]
         Redis[Redis Pub/Sub]
-        Storage[/opt/latarnia/data/app-name/]
+        Storage[/opt/latarnia/{env}/data/{app_id}/]
         Journal[journald<br/>system journal]
     end
     
@@ -251,8 +251,8 @@ graph LR
     
     subgraph "System Integration"
         Redis[Redis Pub/Sub]
-        Storage[/opt/latarnia/data/app-name/]
-        Logs[/opt/latarnia/logs/app-name/]
+        Storage[/opt/latarnia/{env}/data/{app_id}/]
+        Logs[/opt/latarnia/{env}/logs/{app_id}-streamlit.log]
     end
     
     App --> Components
