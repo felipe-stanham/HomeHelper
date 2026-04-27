@@ -34,7 +34,7 @@ Latarnia is a unified home automation platform for Raspberry Pi 5 (8GB RAM) that
 | P-0002  | Latarnia        | [DONE]      | Platform rename + evolved manifests, Postgres, MCP gateway, Redis Streams, web UI proxy |
 | P-0003  | Dynamic MCP Port Allocation | [DONE] | Runtime allocation of MCP ports from configured range |
 | P-0004  | Env-Scoped Services | [DONE]      | Env-scope per-app systemd units + bootstrap docs for main platform units |
-| P-0005  | Activate Systemd Per-App | [DONE] (Pi/TST regression pending) | LaunchRouter dispatches Linux→ServiceManager, Darwin→SubprocessLauncher; per-app units use venv Python, Restart=on-failure, PartOf=, ENV=; linger warning on startup; `/api/apps` reports combined systemd+`/health` status (green/yellow/red/grey). |
+| P-0005  | Activate Systemd Per-App | [DONE] | LaunchRouter dispatches Linux→ServiceManager, Darwin→SubprocessLauncher; per-app units use venv Python, Restart=on-failure, ENV= (no PartOf= — independent lifetimes); startup reconciliation claims ports for already-running units; linger warning on startup; `/api/apps` reports combined systemd+`/health` status (green/yellow/red/grey); logs via journald on Linux. |
 
 ## Testing Tools
 
@@ -102,7 +102,7 @@ Any one of these is enough to justify opening a P-0006 spec:
 - You want TLS on the dashboard or any app UI (then: Caddy is the cheapest way).
 - You need routing rules (path rewrites, auth headers, rate limits) that the Python proxy doesn't cleanly support.
 - You hit 15+ apps and the platform's own Python process starts showing load from proxying.
-- You want apps to survive a platform restart (a case for dropping `PartOf=` and managing apps fully independently).
+- You want apps to survive a platform restart (already delivered by P-0005 Scope 4: `PartOf=` removed, units have independent lifetimes).
 - A second host appears and you need cross-host routing.
 
 If none of those are true a year from now, V2 probably isn't worth it. Leave this section as a record of the thinking and move on.

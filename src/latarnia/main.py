@@ -16,6 +16,12 @@ from latarnia.utils.system_monitor import SystemMonitor
 from latarnia.web.dashboard import router as dashboard_router
 
 
+# Module-level logger so endpoint handlers can log errors. setup_logging()
+# below configures handlers/level later in lifespan; getLogger() is
+# idempotent so the same logger instance is returned then.
+logger = logging.getLogger("latarnia.main")
+
+
 # Initialize logging
 def setup_logging():
     """Setup logging configuration"""
@@ -911,19 +917,10 @@ async def stop_health_monitoring():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/health/{app_id}")
-async def get_app_health(app_id: str):
-    """Get health status for a specific app"""
-    try:
-        health = health_monitor.get_health_status(app_id)
-        if health:
-            return {"success": True, "data": health.to_dict()}
-        else:
-            raise HTTPException(status_code=404, detail=f"Health status not found for app {app_id}")
-    except Exception as e:
-        logger.error(f"Failed to get health status for app {app_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+# NOTE: static-path routes (/status, /statistics, /config) MUST come before
+# the dynamic `/api/health/{app_id}` route — FastAPI matches in declaration
+# order, otherwise GET /api/health/status falls into the {app_id} handler
+# with app_id="status" and returns a misleading 404/500.
 
 @app.get("/api/health")
 async def get_all_health_statuses():
@@ -933,6 +930,17 @@ async def get_all_health_statuses():
         return {"success": True, "data": {app_id: status.to_dict() for app_id, status in statuses.items()}}
     except Exception as e:
         logger.error(f"Failed to get all health statuses: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/health/status")
+async def get_health_monitoring_status():
+    """Get health monitoring system status"""
+    try:
+        is_running = health_monitor.is_monitoring()
+        return {"success": True, "data": {"monitoring": is_running}}
+    except Exception as e:
+        logger.error(f"Failed to get health monitoring status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -958,14 +966,18 @@ async def update_health_config(config: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/health/status")
-async def get_health_monitoring_status():
-    """Get health monitoring system status"""
+@app.get("/api/health/{app_id}")
+async def get_app_health(app_id: str):
+    """Get health status for a specific app"""
     try:
-        is_running = health_monitor.is_monitoring()
-        return {"success": True, "data": {"monitoring": is_running}}
+        health = health_monitor.get_health_status(app_id)
+        if health:
+            return {"success": True, "data": health.to_dict()}
+        raise HTTPException(status_code=404, detail=f"Health status not found for app {app_id}")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to get health monitoring status: {e}")
+        logger.error(f"Failed to get health status for app {app_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
