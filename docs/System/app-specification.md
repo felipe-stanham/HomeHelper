@@ -1067,6 +1067,30 @@ my_app/
 - Ship all schema changes as migration files
 - Test migrations locally before deploying
 
+### Platform-Provided Postgres Extensions
+
+Every Latarnia-provisioned per-app database has the following extensions enabled automatically by the platform — apps do **not** need to `CREATE EXTENSION` in their migrations (the per-app role doesn't have privilege anyway):
+
+| Extension | Use case |
+|---|---|
+| `vector` (pgvector) | Vector similarity search — embeddings, RAG, semantic search |
+
+The list lives in `db_provisioner.py::DEFAULT_EXTENSIONS`. The platform runs `CREATE EXTENSION IF NOT EXISTS <ext>` for each on every provisioning pass (idempotent), so the list applies to both newly created and existing app DBs.
+
+If an OS-level extension package isn't installed (e.g., `postgresql-17-pgvector` missing on the host), the platform logs a `WARNING` and continues — apps that don't need the extension are unaffected; apps that do need it will fail loudly at their own migration or runtime.
+
+**Use pgvector in your migrations directly:**
+```sql
+-- migrations/001_initial.sql
+CREATE TABLE documents (
+    id SERIAL PRIMARY KEY,
+    body TEXT NOT NULL,
+    embedding vector(1536)  -- OpenAI ada-002 dimension
+);
+
+CREATE INDEX ON documents USING hnsw (embedding vector_cosine_ops);
+```
+
 ---
 
 ## Redis Streams (App-to-App Communication)

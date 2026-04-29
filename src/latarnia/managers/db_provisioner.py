@@ -26,6 +26,17 @@ CREATE TABLE IF NOT EXISTS schema_versions (
 )
 """
 
+# Extensions enabled in every Latarnia-provisioned per-app database.
+# Apps don't need to add `CREATE EXTENSION` to their migrations — declaring
+# `database: true` in the manifest is enough. The per-app role does not
+# have CREATE EXTENSION privilege; the platform (running as superuser)
+# ensures these are present at provisioning time and on every restart.
+#
+# Each entry must be installed at the OS level (e.g. `postgresql-17-pgvector`
+# for `vector`); missing binaries surface as logged warnings, not failures,
+# so dev hosts without all extensions installed still work for unrelated apps.
+DEFAULT_EXTENSIONS = ["vector"]
+
 
 @dataclass
 class ProvisioningResult:
@@ -73,6 +84,14 @@ class DbProvisioner:
                 self.logger.info(f"Provisioned new database: {db_name}")
             else:
                 self.logger.info(f"Database {db_name} already exists, reusing")
+
+            # Ensure platform-default extensions are available before any
+            # migrations run. Idempotent (CREATE EXTENSION IF NOT EXISTS),
+            # runs on both new and reused databases so existing app DBs get
+            # backfilled at the next platform start. Missing OS-level
+            # binaries (e.g. postgresql-XX-pgvector not installed) are
+            # logged as warnings, not provisioning failures.
+            self._ensure_default_extensions(db_name)
 
             # Create schema_versions table
             self.pg_client.execute_on_db(db_name, SCHEMA_VERSIONS_DDL)
@@ -148,6 +167,28 @@ class DbProvisioner:
             return True, [], None
 
         return self._run_migrations(db_name, pending)
+
+    def _ensure_default_extensions(self, db_name: str) -> None:
+        """Run `CREATE EXTENSION IF NOT EXISTS <ext>` for each platform-default.
+
+        Failures are logged as warnings, not raised: a dev host without
+        `postgresql-XX-pgvector` installed should still be able to provision
+        DBs for apps that don't need vectors. Apps that *do* need a missing
+        extension will fail loudly at their own migration / runtime.
+        """
+        for ext in DEFAULT_EXTENSIONS:
+            try:
+                self.pg_client.execute_on_db(
+                    db_name, f'CREATE EXTENSION IF NOT EXISTS "{ext}"'
+                )
+                self.logger.info(f"Ensured extension {ext!r} on {db_name}")
+            except Exception as e:
+                self.logger.warning(
+                    "Could not enable extension %r on %s: %s. "
+                    "Apps that need %r will fail; install postgresql-XX-%s "
+                    "on the host to fix.",
+                    ext, db_name, e, ext, ext,
+                )
 
     def _generate_names(self, app_name: str) -> Tuple[str, str]:
         """Generate database name and role name from app name."""
