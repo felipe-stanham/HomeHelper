@@ -7,6 +7,7 @@ acts as an MCP server (SSE transport) to external clients and as an
 MCP client (SSE transport) to individual app MCP servers.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -140,52 +141,67 @@ class MCPGateway:
             )
 
     async def _fetch_tools_from_app(
-        self, app_id: str, app_name: str, mcp_port: int
+        self, app_id: str, app_name: str, mcp_port: int,
+        retries: int = 3, retry_delay: float = 2.0,
     ) -> List[ToolIndexEntry]:
         """
         Connect to an app's MCP server, call list_tools, and return
         ToolIndexEntry objects with namespaced tool names.
+
+        Retries on failure to allow time for the app's MCP server to boot.
         """
         entries: List[ToolIndexEntry] = []
-        try:
-            from mcp.client.sse import sse_client
-            from mcp.client.session import ClientSession
+        last_error = None
+        for attempt in range(1, retries + 1):
+            entries = []
+            try:
+                from mcp.client.sse import sse_client
+                from mcp.client.session import ClientSession
 
-            # Apps run on the same host as the platform (localhost assumption, v1)
-            async with sse_client(
-                f"http://localhost:{mcp_port}/sse"
-            ) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    result = await session.list_tools()
+                # Apps run on the same host as the platform (localhost assumption, v1)
+                async with sse_client(
+                    f"http://localhost:{mcp_port}/sse"
+                ) as (read_stream, write_stream):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        result = await session.list_tools()
 
-                    for tool in result.tools:
-                        namespaced_name = f"{app_name}.{tool.name}"
-                        entries.append(
-                            ToolIndexEntry(
-                                app_id=app_id,
-                                app_name=app_name,
-                                mcp_port=mcp_port,
-                                original_tool_name=tool.name,
-                                tool_schema={
-                                    "name": namespaced_name,
-                                    "description": tool.description or "",
-                                    "inputSchema": tool.inputSchema
-                                    if tool.inputSchema
-                                    else {"type": "object", "properties": {}},
-                                },
+                        for tool in result.tools:
+                            namespaced_name = f"{app_name}.{tool.name}"
+                            entries.append(
+                                ToolIndexEntry(
+                                    app_id=app_id,
+                                    app_name=app_name,
+                                    mcp_port=mcp_port,
+                                    original_tool_name=tool.name,
+                                    tool_schema={
+                                        "name": namespaced_name,
+                                        "description": tool.description or "",
+                                        "inputSchema": tool.inputSchema
+                                        if tool.inputSchema
+                                        else {"type": "object", "properties": {}},
+                                    },
+                                )
                             )
-                        )
 
-            logger.info(
-                "Fetched %d tools from app %s (port %d)",
-                len(entries), app_name, mcp_port,
-            )
-        except Exception as e:
-            logger.warning(
-                "Failed to fetch tools from app %s on port %d: %s",
-                app_name, mcp_port, e,
-            )
+                logger.info(
+                    "Fetched %d tools from app %s (port %d)",
+                    len(entries), app_name, mcp_port,
+                )
+                return entries
+            except Exception as e:
+                last_error = e
+                if attempt < retries:
+                    logger.debug(
+                        "Attempt %d/%d failed to fetch tools from %s on port %d: %s — retrying in %.1fs",
+                        attempt, retries, app_name, mcp_port, e, retry_delay,
+                    )
+                    await asyncio.sleep(retry_delay)
+
+        logger.warning(
+            "Failed to fetch tools from app %s on port %d after %d attempts: %s",
+            app_name, mcp_port, retries, last_error,
+        )
         return entries
 
     # ------------------------------------------------------------------

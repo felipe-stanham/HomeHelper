@@ -120,7 +120,8 @@ class UIRenderer:
         html += '</tr></thead><tbody>'
         
         for item in data:
-            html += '<tr>'
+            item_id = item.get('id', '')
+            html += f'<tr data-item-id="{item_id}" style="cursor:pointer">'
             for key in keys:
                 value = item.get(key, '')
                 formatted_value = self._format_value(key, value)
@@ -130,6 +131,28 @@ class UIRenderer:
         html += '</tbody></table></div>'
         return html
     
+    def render_detail_html(self, data: Dict[str, Any], resource_name: str) -> str:
+        """Render a single resource item as an HTML detail view."""
+        if not data:
+            return f'<div class="alert alert-info">No {resource_name} detail found</div>'
+
+        html = '<div class="card"><div class="card-body">'
+        html += '<dl class="row mb-0">'
+
+        for key, value in data.items():
+            display_name = key.replace('_', ' ').title()
+            # Render nested lists (e.g. events, tags) as sub-tables
+            if isinstance(value, list) and value and isinstance(value[0], dict):
+                formatted = self.render_table_html(value, key)
+            elif isinstance(value, list):
+                formatted = ', '.join(str(v) for v in value) if value else '<span class="text-muted">None</span>'
+            else:
+                formatted = self._format_value(key, value)
+            html += f'<dt class="col-sm-3">{display_name}</dt><dd class="col-sm-9">{formatted}</dd>'
+
+        html += '</dl></div></div>'
+        return html
+
     def _format_value(self, key: str, value: Any) -> str:
         """Format a value for display based on its key name and type"""
         if value is None:

@@ -358,11 +358,14 @@ class AppManager:
         
         try:
             self.logger.info(f"Scanning for apps in {self.apps_dir}")
-            
-            # Scan for app directories
-            for app_path in self.apps_dir.iterdir():
-                if not app_path.is_dir():
-                    continue
+
+            # Sort app directories: apps without dependencies first so
+            # that dependency checks succeed regardless of filesystem order.
+            app_dirs = sorted(
+                (p for p in self.apps_dir.iterdir() if p.is_dir()),
+                key=lambda p: self._has_dependencies(p),
+            )
+            for app_path in app_dirs:
                 
                 manifest_file = app_path / "latarnia.json"
                 if not manifest_file.exists():
@@ -436,6 +439,7 @@ class AppManager:
                                 applied_migrations=result.applied_migrations,
                                 last_migration_at=datetime.now() if result.applied_migrations else None,
                             )
+
                         else:
                             self.logger.warning(
                                 f"App {manifest.name} requires database but no provisioner configured"
@@ -513,6 +517,21 @@ class AppManager:
             self.logger.error(f"App discovery failed: {e}")
             return 0
     
+    @staticmethod
+    def _has_dependencies(app_path: Path) -> bool:
+        """Return True if the app declares dependencies (used for discovery ordering)."""
+        manifest_file = app_path / "latarnia.json"
+        if not manifest_file.exists():
+            manifest_file = app_path / "homehelper.json"
+        if not manifest_file.exists():
+            return False
+        try:
+            import json
+            data = json.loads(manifest_file.read_text())
+            return bool(data.get("requires"))
+        except Exception:
+            return False
+
     def _parse_manifest(self, manifest_file: Path) -> Optional[AppManifest]:
         """Parse and validate application manifest"""
         try:

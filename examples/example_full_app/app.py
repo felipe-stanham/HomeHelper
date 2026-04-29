@@ -34,6 +34,7 @@ except ImportError:
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from mcp import types as mcp_types
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
@@ -173,7 +174,7 @@ def _get_state_file() -> Optional[Path]:
     if not data_dir:
         return None
     data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir / "example_full_app" / "state.json"
+    return data_dir / "state.json"
 
 
 def load_state() -> dict:
@@ -204,21 +205,30 @@ app_state = {}
 # ---------------------------------------------------------------------------
 
 def publish_item_event(item: dict):
-    """Publish an item creation event to the declared stream."""
+    """Publish an item creation event to the declared stream and pub/sub."""
     if not redis_url:
         return
     try:
         r = redis.from_url(redis_url)
+        event_payload = {
+            "source": "example_full_app",
+            "timestamp": int(datetime.now().timestamp()),
+            "version": "1.0",
+            "data": {"type": "item_created", "item": item},
+        }
+        # Publish to Redis Stream (for stream subscribers)
         stream_key = "latarnia:streams:example.events.created"
         r.xadd(stream_key, {
-            "source": "example_full_app",
-            "timestamp": str(int(datetime.now().timestamp())),
-            "version": "1.0",
-            "data": json.dumps({"type": "item_created", "item": item}),
+            "source": event_payload["source"],
+            "timestamp": str(event_payload["timestamp"]),
+            "version": event_payload["version"],
+            "data": json.dumps(event_payload["data"]),
         })
+        # Publish to pub/sub channel (for dashboard recent activity)
+        r.publish("latarnia:events:app", json.dumps(event_payload))
         logger.info("Published item_created event for item %s", item.get("id"))
     except Exception as e:
-        logger.error("Failed to publish stream event: %s", e)
+        logger.error("Failed to publish event: %s", e)
 
 
 def _stream_subscriber(redis_url_str: str):
@@ -282,6 +292,45 @@ async def ui_resources():
     return ["items", "events"]
 
 
+@rest_app.get("/api/items/{item_id}")
+async def get_item(item_id: int):
+    conn = _get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database not available")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, description, status, created_at FROM items WHERE id = %s",
+                (item_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Item not found")
+            item = {
+                "id": row[0], "name": row[1], "description": row[2],
+                "status": row[3], "created_at": row[4].isoformat() if row[4] else None,
+            }
+            # Fetch tags
+            cur.execute(
+                "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tag_id WHERE it.item_id = %s ORDER BY t.name",
+                (item_id,),
+            )
+            item["tags"] = [r[0] for r in cur.fetchall()]
+            # Fetch related events
+            cur.execute(
+                "SELECT id, event_type, payload, created_at FROM events WHERE item_id = %s ORDER BY id DESC",
+                (item_id,),
+            )
+            item["events"] = [
+                {"id": r[0], "event_type": r[1], "payload": r[2],
+                 "created_at": r[3].isoformat() if r[3] else None}
+                for r in cur.fetchall()
+            ]
+            return item
+    finally:
+        conn.close()
+
+
 @rest_app.get("/api/items")
 async def list_items():
     return db_list_items()
@@ -306,6 +355,30 @@ async def create_item(name: str, description: str = ""):
     save_state(app_state)
 
     return item
+
+
+@rest_app.get("/api/events/{event_id}")
+async def get_event(event_id: int):
+    conn = _get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database not available")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT e.id, e.item_id, e.event_type, e.payload, e.created_at, i.name as item_name "
+                "FROM events e LEFT JOIN items i ON e.item_id = i.id WHERE e.id = %s",
+                (event_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Event not found")
+            return {
+                "id": row[0], "item_id": row[1], "event_type": row[2],
+                "payload": row[3], "created_at": row[4].isoformat() if row[4] else None,
+                "item_name": row[5],
+            }
+    finally:
+        conn.close()
 
 
 @rest_app.get("/api/events")
@@ -460,15 +533,15 @@ mcp_server = Server("example-full-app")
 @mcp_server.list_tools()
 async def list_tools():
     return [
-        {
-            "name": "list_items",
-            "description": "List all items in the database",
-            "inputSchema": {"type": "object", "properties": {}, "required": []},
-        },
-        {
-            "name": "add_item",
-            "description": "Add a new item to the database",
-            "inputSchema": {
+        mcp_types.Tool(
+            name="list_items",
+            description="List all items in the database",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        mcp_types.Tool(
+            name="add_item",
+            description="Add a new item to the database",
+            inputSchema={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Item name"},
@@ -476,12 +549,12 @@ async def list_tools():
                 },
                 "required": ["name"],
             },
-        },
-        {
-            "name": "get_status",
-            "description": "Get the current status of the example app",
-            "inputSchema": {"type": "object", "properties": {}, "required": []},
-        },
+        ),
+        mcp_types.Tool(
+            name="get_status",
+            description="Get the current status of the example app",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
     ]
 
 
@@ -563,7 +636,11 @@ def main():
     parser.add_argument("--data-dir", type=str, default=None, help="Data directory")
     args = parser.parse_args()
 
-    db_url = args.db_url
+    raw_db_url = args.db_url
+    if raw_db_url and raw_db_url.startswith("env:"):
+        db_url = os.environ.get(raw_db_url[4:])
+    else:
+        db_url = raw_db_url
     redis_url = args.redis_url
     mcp_port = args.mcp_port
     data_dir = Path(args.data_dir) if args.data_dir else None

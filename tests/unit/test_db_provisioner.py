@@ -120,6 +120,59 @@ class TestProvisionDatabase:
         mock_pg_client.drop_role.assert_called_once()
 
 
+class TestDefaultExtensions:
+    """Platform-default Postgres extensions (pgvector etc.) on every app DB."""
+
+    def test_provision_creates_pgvector_on_new_db(self, provisioner, mock_pg_client, tmp_path):
+        """A freshly provisioned DB has CREATE EXTENSION IF NOT EXISTS vector run on it."""
+        result = provisioner.provision_database("crm", tmp_path)
+        assert result.success is True
+        # Find the CREATE EXTENSION call among execute_on_db invocations.
+        ext_calls = [
+            c for c in mock_pg_client.execute_on_db.call_args_list
+            if "CREATE EXTENSION" in str(c)
+        ]
+        assert len(ext_calls) >= 1
+        assert any('"vector"' in str(c) for c in ext_calls)
+
+    def test_provision_creates_pgvector_on_reused_db(self, provisioner, mock_pg_client, tmp_path):
+        """Existing DBs get backfilled — extension ensure runs on reuse too."""
+        mock_pg_client.database_exists.return_value = True  # reuse path
+        result = provisioner.provision_database("crm", tmp_path)
+        assert result.success is True
+        ext_calls = [
+            c for c in mock_pg_client.execute_on_db.call_args_list
+            if "CREATE EXTENSION" in str(c)
+        ]
+        assert any('"vector"' in str(c) for c in ext_calls)
+
+    def test_extension_failure_warns_but_does_not_fail_provisioning(
+        self, provisioner, mock_pg_client, tmp_path, caplog,
+    ):
+        """A missing OS-level binary (CREATE EXTENSION fails) → warning, not failure.
+
+        Dev hosts without postgresql-XX-pgvector installed should still be
+        able to provision DBs for apps that don't need vectors.
+        """
+        # Make execute_on_db raise on the CREATE EXTENSION call only.
+        original_execute = mock_pg_client.execute_on_db
+        def selective_fail(db_name, sql, *args, **kwargs):
+            if "CREATE EXTENSION" in sql:
+                raise Exception("ERROR: extension \"vector\" is not available")
+            return None
+        mock_pg_client.execute_on_db.side_effect = selective_fail
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="latarnia.db_provisioner"):
+            result = provisioner.provision_database("crm", tmp_path)
+
+        assert result.success is True
+        assert any(
+            "Could not enable extension" in rec.message and "vector" in rec.message
+            for rec in caplog.records
+        ), "Expected a WARNING naming the missing extension"
+
+
 class TestMigrationRunner:
 
     def test_list_migration_files_sorted(self, provisioner, tmp_path):

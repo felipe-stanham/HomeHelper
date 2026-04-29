@@ -50,6 +50,9 @@ Use this once per host when bringing up a new homeserver or re-creating the main
 ## 1. Prerequisites on the Pi
 - OS: Raspberry Pi OS (Debian-based)
 - Packages: `git`, `python3`, `python3-venv`, `redis-server`, `postgresql`
+- Postgres extensions (one OS package per platform-default extension; see `db_provisioner.py::DEFAULT_EXTENSIONS`):
+  - `postgresql-17-pgvector` — pgvector for vector similarity search
+  - Install with: `sudo apt install postgresql-17-pgvector` (replace `17` with your installed Postgres major version)
 - Base dirs created as root:
   ```
   sudo mkdir -p /opt/latarnia/tst /opt/latarnia/prd
