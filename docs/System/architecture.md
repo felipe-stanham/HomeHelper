@@ -168,7 +168,21 @@ graph TB
   - Enforce backward compatibility on version bumps (set-difference check; reject and stop app on violation)
   - Expose `GET /api/mcp/status` and `GET /api/mcp/tools` REST endpoints
 
-### 9. Redis Message Bus
+### 9. DB Provisioner
+- **Purpose**: Provision per-app Postgres databases for apps with `database: true` in their manifest. Apps never touch superuser; the platform handles role + DB creation, privilege grants, and migration execution.
+- **Module**: `src/latarnia/managers/db_provisioner.py` (uses `core/pg_client.py` as the superuser-credential client).
+- **Responsibilities**:
+  - Generate per-app names: `{database_prefix}{app_name}` and `{role_prefix}{app_name}_role`.
+  - Create role + database if absent; revoke `PUBLIC` connect; grant connect to the per-app role.
+  - **Ensure platform-default extensions** via `CREATE EXTENSION IF NOT EXISTS <ext>` for every entry in `DEFAULT_EXTENSIONS` (currently `["vector"]` for pgvector). Idempotent — runs on both new and reused DBs so existing app DBs get backfilled at the next provisioning pass. Missing OS-level binaries log a `WARNING`, not a failure.
+  - Create the `schema_versions` tracking table.
+  - Run pending migrations from the app's `migrations/*.sql` directory in numeric order, in a single transaction; record file name + sha256 checksum + duration.
+  - Drop database + role on initial provisioning failure (clean slate) — but preserve them on version-bump migration failure.
+  - Grant `ALL PRIVILEGES ON ALL TABLES / SEQUENCES IN SCHEMA public` to the per-app role after migrations so the app can use objects created by the superuser.
+  - Build the connection URL passed to apps via `--db-url env:DATABASE_URL` + `Environment=DATABASE_URL=...` in the systemd unit.
+- **Extensions list (`DEFAULT_EXTENSIONS`)**: append-only, hardcoded today. `vector` was added for embeddings / RAG / semantic search. Adding more (postgis, citext, etc.) is a one-line edit; if per-app extension overrides ever become needed, refactor to manifest-driven at that point.
+
+### 10. Redis Message Bus
 - **Purpose**: Inter-app communication and event system
 - **Responsibilities**:
   - Pub/Sub messaging between apps
@@ -177,7 +191,7 @@ graph TB
   - Configuration change notifications
   - App status updates
 
-### 10. Web Proxy
+### 11. Web Proxy
 - **Purpose**: Reverse proxy that exposes app-owned web UIs through the platform
 - **Routes**: `GET|POST|... /apps/{app_name}/{path}` (HTTP), `WS /apps/{app_name}/{path}` (WebSocket)
 - **Redirect**: Bare `/apps/{app_name}` issues a 307 to `/apps/{app_name}/`

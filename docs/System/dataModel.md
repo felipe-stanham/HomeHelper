@@ -245,7 +245,9 @@ erDiagram
 
 ### Postgres Per-App Database Schema
 
-Each app with `database: true` receives its own Postgres database (`latarnia_{app_name}`) and role (`latarnia_{app_name}_role`). The platform creates the following tracking table in every provisioned database.
+Each app with `database: true` receives its own Postgres database (`{database_prefix}{app_name}`, e.g. `tst_latarnia_crm`) and role (`{role_prefix}{app_name}_role`). The platform creates the following tracking table in every provisioned database.
+
+**Platform-default extensions:** Every Latarnia-provisioned app DB has `vector` (pgvector) enabled by the platform at provisioning time. Apps using `vector(N)` columns or HNSW indexes do NOT need a `CREATE EXTENSION` migration — the per-app role doesn't have privilege anyway. The list lives in `db_provisioner.py::DEFAULT_EXTENSIONS`.
 
 ```mermaid
 erDiagram
