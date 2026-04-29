@@ -14,7 +14,7 @@ Latarnia is a unified home automation platform for Raspberry Pi 5 (8GB RAM) that
 
 ## Cross-Project Constraints
 - Target hardware: Raspberry Pi 5 with 8GB RAM running Raspberry Pi OS (Debian-based)
-- Tech stack: Python 3.9+, FastAPI, Bootstrap 5, Redis
+- Tech stack: Python 3.9+, FastAPI, Bootstrap 5, Redis, Postgres (with `pgvector` enabled cluster-wide as a platform-default extension)
 - Port ranges: Main app on 8000, service apps on 8100-8199, MCP servers on 9001-9099, Streamlit apps on 8501+
 - Environment port isolation (homeserver multi-env):
 
