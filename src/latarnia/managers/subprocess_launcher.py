@@ -13,17 +13,24 @@ import os
 import subprocess
 import psutil
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, TYPE_CHECKING
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from .secret_manager import SecretManager
 
 
 class SubprocessLauncher:
     """Launches service apps as platform-process children (macOS fallback)."""
 
-    def __init__(self, config_manager, app_manager, port_manager):
+    def __init__(self, config_manager, app_manager, port_manager,
+                 secret_manager: Optional["SecretManager"] = None):
         self.config_manager = config_manager
         self.app_manager = app_manager
         self.port_manager = port_manager
+        # P-0006: optional. When set, refuses to start apps with missing
+        # required secrets and merges declared secrets into Popen env=.
+        self.secret_manager = secret_manager
         self.logger = logging.getLogger("latarnia.subprocess_launcher")
 
         # Track running processes: app_id -> process info
@@ -45,6 +52,23 @@ class SubprocessLauncher:
             if app.type != "service":
                 self.logger.error(f"App {app_id} is not a service app")
                 return False
+
+            # P-0006: refuse-to-start gate. Run BEFORE port allocation so a
+            # missing secret leaves no port allocations behind. Holds the
+            # filtered env dict for later merge into Popen `env=`.
+            secret_env: Dict[str, str] = {}
+            if self.secret_manager is not None:
+                secret_result, secret_env = self.secret_manager.get_filtered_env(app)
+                if not secret_result.ok:
+                    self.logger.error(
+                        "Refusing to start %s: %s", app_id, secret_result.detail,
+                    )
+                    app.runtime_info.error_message = secret_result.detail
+                    self.app_manager.registry.update_app(
+                        app_id, status="error",
+                        runtime_info=app.runtime_info,
+                    )
+                    return False
 
             # Check if already running
             if app_id in self.processes:
@@ -109,6 +133,16 @@ class SubprocessLauncher:
             if app.database_info and app.database_info.provisioned and app.database_info.connection_url:
                 proc_env["DATABASE_URL"] = app.database_info.connection_url
                 cmd.extend(["--db-url", "env:DATABASE_URL"])
+
+            # P-0006: merge declared secrets into the subprocess env. Done
+            # AFTER os.environ copy so secrets win over any host env shadowing.
+            # Logged only by count + key list, never by value.
+            if secret_env:
+                proc_env.update(secret_env)
+                self.logger.info(
+                    "Injecting %d secret(s) into %s: %s",
+                    len(secret_env), app_id, sorted(secret_env.keys()),
+                )
 
             # Start process
             self.logger.info(f"Starting app {app_id} with command: {' '.join(cmd)}")

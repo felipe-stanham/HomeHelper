@@ -186,6 +186,7 @@ event_subscriber = RedisEventSubscriber(
 # Initialize app management components
 from .managers import AppManager, AppStatus, AppType, PortManager, ServiceManager
 from .managers.health_monitor import HealthMonitor
+from .managers.secret_manager import SecretManager
 from .managers.subprocess_launcher import SubprocessLauncher
 from .managers.streamlit_manager import StreamlitManager
 from .core.pg_client import PgClient
@@ -201,9 +202,19 @@ app_manager = AppManager(
     config_manager, port_manager,
     db_provisioner=db_provisioner, stream_manager=stream_manager,
 )
-service_manager = ServiceManager(config_manager, app_manager, port_manager)
+# P-0006: SecretManager owns the per-env master secrets file and per-app
+# filtered files. Wired into both launchers so refuse-to-start + injection
+# work uniformly across (Linux+systemd) and (macOS+subprocess) paths.
+secret_manager = SecretManager(config_manager, app_manager)
+service_manager = ServiceManager(
+    config_manager, app_manager, port_manager,
+    secret_manager=secret_manager,
+)
 health_monitor = HealthMonitor(config_manager, app_manager, service_manager)
-subprocess_launcher = SubprocessLauncher(config_manager, app_manager, port_manager)
+subprocess_launcher = SubprocessLauncher(
+    config_manager, app_manager, port_manager,
+    secret_manager=secret_manager,
+)
 streamlit_manager = StreamlitManager(config_manager, app_manager, port_manager)
 
 
@@ -978,6 +989,23 @@ async def get_app_health(app_id: str):
         raise
     except Exception as e:
         logger.error(f"Failed to get health status for app {app_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# P-0006: Secret listing endpoint. Returns names + mtime + consuming apps;
+# NEVER values. Listing is read-only — to set/rotate, the operator edits
+# /opt/latarnia/{env}/secrets.env directly with $EDITOR.
+@app.get("/api/secrets")
+async def list_secrets():
+    """List declared secret names + metadata. No values."""
+    try:
+        items = secret_manager.list_secrets()
+        return {
+            "env": secret_manager.env,
+            "secrets": [m.to_dict() for m in items],
+        }
+    except Exception as e:
+        logger.error(f"Failed to list secrets: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

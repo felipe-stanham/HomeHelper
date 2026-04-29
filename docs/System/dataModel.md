@@ -312,9 +312,12 @@ Paths are env-scoped (P-0004): the same Pi runs `tst` and `prd` side-by-side und
 │       └── migrations/                # Optional, for apps with database: true
 ├── data/
 │   └── {app_id}/                      # Per-app data dir; passed via --data-dir
-└── logs/
-    └── {app_id}.log                   # macOS dev only (SubprocessLauncher Popen redirect)
-    └── {app_id}-streamlit.log         # Streamlit apps (per-streamlit subprocess redirect)
+├── logs/
+│   └── {app_id}.log                   # macOS dev only (SubprocessLauncher Popen redirect)
+│   └── {app_id}-streamlit.log         # Streamlit apps (per-streamlit subprocess redirect)
+├── secrets.env                        # Master secret store (operator-edited, mode 600). NEW in P-0006.
+└── secrets/                           # Per-app filtered files (platform-managed, mode 700). NEW in P-0006.
+    └── {app_id}.env                   # Mode 600. Contains only keys this app declared in requires_secrets.
 ```
 
 ### Per-user systemd state (Linux only)
