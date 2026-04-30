@@ -5,6 +5,7 @@ Tests systemd service integration, health monitoring, and service lifecycle mana
 """
 
 import logging
+import os
 import pytest
 import tempfile
 import asyncio
@@ -881,6 +882,160 @@ class TestHealthMonitor:
         assert health_monitor.is_monitoring() is True
 
 
+class TestSecretIntegration(TestServiceManager):
+    """P-0006: ServiceManager + SecretManager wiring (cap-003, cap-005).
+
+    Inherits fixtures from TestServiceManager (service_manager,
+    mock_app_manager, sample_service_app).
+    """
+
+    def test_environment_file_line_present_when_secret_manager_wired(
+        self, service_manager, mock_app_manager, sample_service_app, tmp_path,
+    ):
+        """cap-003: generated unit references EnvironmentFile=-... when SecretManager is set."""
+        from latarnia.managers.secret_manager import SecretManager
+        # Wire a SecretManager pointing at a tmp env root.
+        cm = service_manager.config_manager
+        cm.get_data_dir.return_value = tmp_path / "data"
+        (tmp_path / "data").mkdir(exist_ok=True)
+        sm = SecretManager(cm, mock_app_manager, env="dev")
+        service_manager.secret_manager = sm
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        template = service_manager.generate_service_template("test-service")
+
+        assert template is not None
+        expected_path = sm.per_app_dir / "test-service.env"
+        assert f"EnvironmentFile=-{expected_path}" in template
+
+    def test_no_environment_file_line_when_secret_manager_unset(
+        self, service_manager, mock_app_manager, sample_service_app,
+    ):
+        """Backward compat: no SecretManager wired → no EnvironmentFile line."""
+        service_manager.secret_manager = None
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+        template = service_manager.generate_service_template("test-service")
+        assert "EnvironmentFile=" not in template
+
+    @patch('subprocess.run')
+    def test_start_service_refuses_when_secret_missing(
+        self, mock_subprocess, service_manager, mock_app_manager,
+        sample_service_app, tmp_path,
+    ):
+        """cap-005: missing required secret → start_service returns False
+        without allocating ports, writing the unit file, or calling systemctl."""
+        from latarnia.managers.secret_manager import SecretManager
+        from latarnia.managers.app_manager import AppStatus
+
+        cm = service_manager.config_manager
+        cm.get_data_dir.return_value = tmp_path / "data"
+        (tmp_path / "data").mkdir(exist_ok=True)
+        sm = SecretManager(cm, mock_app_manager, env="dev")
+        service_manager.secret_manager = sm
+
+        # Master file has A but the app declares A and B
+        master = tmp_path / "secrets.env"
+        master.write_text("A=1\n")
+        os.chmod(master, 0o600)
+        sample_service_app.manifest.config.requires_secrets = ["A", "B"]
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        # Wire a port manager so the test can confirm no allocation happened.
+        port_manager = MagicMock()
+        port_manager.allocate_port = MagicMock()
+        service_manager.port_manager = port_manager
+
+        ok = service_manager.start_service("test-service")
+
+        assert ok is False
+        # No port allocation attempted.
+        port_manager.allocate_port.assert_not_called()
+        # No unit file written.
+        unit_path = service_manager.systemd_user_dir / "latarnia-dev-test-service.service"
+        assert not unit_path.exists()
+        # No per-app secrets file written.
+        assert not (tmp_path / "secrets" / "test-service.env").exists()
+        # systemctl never invoked.
+        mock_subprocess.assert_not_called()
+        # registry got the error_message
+        update_calls = mock_app_manager.registry.update_app.call_args_list
+        assert any(
+            call.kwargs.get("status") == AppStatus.ERROR
+            for call in update_calls
+        )
+        # The error message names the missing key, not a value.
+        error_msgs = [
+            sample_service_app.runtime_info.error_message
+        ]
+        assert any("missing required secret" in m and "B" in m for m in error_msgs)
+
+    @patch('subprocess.run')
+    def test_start_service_writes_per_app_file_and_starts(
+        self, mock_subprocess, service_manager, mock_app_manager,
+        sample_service_app, tmp_path,
+    ):
+        """cap-003: happy path — per-app file written before systemctl start."""
+        from latarnia.managers.secret_manager import SecretManager
+
+        cm = service_manager.config_manager
+        cm.get_data_dir.return_value = tmp_path / "data"
+        (tmp_path / "data").mkdir(exist_ok=True)
+        sm = SecretManager(cm, mock_app_manager, env="dev")
+        service_manager.secret_manager = sm
+
+        master = tmp_path / "secrets.env"
+        master.write_text("A=1\nB=2\nC=3\n")
+        os.chmod(master, 0o600)
+        sample_service_app.manifest.config.requires_secrets = ["A", "B"]
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        mock_subprocess.return_value.returncode = 0
+        mock_subprocess.return_value.stderr = ""
+
+        ok = service_manager.start_service("test-service")
+
+        assert ok is True
+        # Per-app file written, filtered, mode 600
+        per_app = tmp_path / "secrets" / "test-service.env"
+        assert per_app.exists()
+        assert per_app.read_text() == "A=1\nB=2\n"
+        assert (per_app.stat().st_mode & 0o777) == 0o600
+
+    @patch('subprocess.run')
+    def test_start_service_does_not_log_secret_value_on_full_launch(
+        self, mock_subprocess, service_manager, mock_app_manager,
+        sample_service_app, tmp_path, caplog,
+    ):
+        """cap-007 (launcher path): sentinel value never appears in any log
+        record across the full validate→materialize→start chain."""
+        from latarnia.managers.secret_manager import SecretManager
+
+        SENTINEL = "sentinel-value-launcher-xyz789"
+
+        cm = service_manager.config_manager
+        cm.get_data_dir.return_value = tmp_path / "data"
+        (tmp_path / "data").mkdir(exist_ok=True)
+        sm = SecretManager(cm, mock_app_manager, env="dev")
+        service_manager.secret_manager = sm
+
+        master = tmp_path / "secrets.env"
+        master.write_text(f"SENTINEL_KEY={SENTINEL}\n")
+        os.chmod(master, 0o600)
+        sample_service_app.manifest.config.requires_secrets = ["SENTINEL_KEY"]
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        mock_subprocess.return_value.returncode = 0
+        mock_subprocess.return_value.stderr = ""
+
+        with caplog.at_level(logging.DEBUG):
+            ok = service_manager.start_service("test-service")
+        assert ok is True
+
+        for rec in caplog.records:
+            assert SENTINEL not in rec.message
+            assert SENTINEL not in str(rec.args)
+
+
 class TestCombinedHealth:
     """P-0005 Scope 3: combined systemd + /health status (flow-03)."""
 
@@ -989,6 +1144,30 @@ class TestCombinedHealth:
         second = hm.get_systemd_states()
         assert first == second == {"foo": "active"}
         assert mock_run.call_count == 1
+
+    def test_get_overall_status_red_for_app_in_error_with_message(
+        self, hm, mock_app_manager,
+    ):
+        """P-0006 cap-005: a refused-to-start app surfaces as RED with the
+        registry's error_message — not GREY/no-status — even though no
+        systemd unit was ever written and no health probe ran."""
+        from latarnia.managers.app_manager import AppRegistryEntry, AppStatus, AppRuntimeInfo
+
+        entry = Mock(spec=AppRegistryEntry)
+        entry.status = AppStatus.ERROR
+        entry.runtime_info = Mock(spec=AppRuntimeInfo)
+        entry.runtime_info.error_message = "missing required secret: VOYAGE_API_KEY"
+        mock_app_manager.registry.get_app.return_value = entry
+
+        hm._systemd_states = {}
+        hm._systemd_states_refreshed_at = datetime.now()
+        hm.health_results = {}
+
+        with patch("latarnia.managers.health_monitor.platform.system", return_value="Linux"):
+            result = hm.get_overall_status("latarnik")
+        assert result["overall_status"] == "red"
+        assert "VOYAGE_API_KEY" in result["detail"]
+        assert "missing required secret" in result["detail"]
 
     def test_get_overall_status_end_to_end(self, hm):
         """End-to-end: combines the cached systemd map with health_results."""

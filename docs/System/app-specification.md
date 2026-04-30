@@ -85,6 +85,7 @@ Each app must include a `latarnia.json` file in its root directory:
 - **config.restart_policy**: `"always"`, `"on-failure"`, `"never"` (default: `"on-failure"` since P-0005 Scope 1). `"never"` maps to systemd's `Restart=no` in the generated unit.
 - **config.redis_streams_publish**: Array of stream names this app publishes to (default: []). Each stream can have at most one publisher.
 - **config.redis_streams_subscribe**: Array of stream names this app subscribes to (default: []). Consumer groups are created per subscribing app.
+- **config.requires_secrets**: Array of environment-variable names the app needs at runtime (default: []). The platform injects matching values from `/opt/latarnia/{env}/secrets.env` into the app's process environment at launch (P-0006). The platform refuses to start the app if any declared name is missing from the master file. See the "Secrets" section below for the operator-side contract.
 - **install.setup_commands**: Shell commands to run during installation
 - **events.publishes**: Array of event types this app publishes (see Redis Events section)
 - **events.subscribes**: Array of event types this app subscribes to (see Redis Events section)
@@ -579,6 +580,7 @@ Environment=ENV={env}
 Environment=REDIS_HOST=...
 Environment=REDIS_PORT=...
 Environment=DATABASE_URL=postgresql://...
+EnvironmentFile=-/opt/latarnia/{env}/secrets/{app_id}.env
 
 [Install]
 WantedBy=default.target
@@ -590,6 +592,7 @@ Notes:
 - **`Restart=on-failure`** by default (P-0005); overridable via `manifest.config.restart_policy` (`always` / `on-failure` / `never` → systemd's `no`).
 - `Environment=ENV={env}` is set so the app and the platform agree on the environment.
 - The platform reads `manifest.config.redis_required`, `data_dir`, `mcp_server`, `database` to decide which CLI flags / `Environment=` lines to add.
+- **`EnvironmentFile=-...`** (leading `-` = ignore-if-missing) references the per-app filtered secrets file written by SecretManager (P-0006). For apps with empty `requires_secrets`, the file is never written and the directive is a no-op.
 
 ### Lifecycle Management
 
@@ -1090,6 +1093,78 @@ CREATE TABLE documents (
 
 CREATE INDEX ON documents USING hnsw (embedding vector_cosine_ops);
 ```
+
+---
+
+## Secrets (P-0006)
+
+Apps that need runtime secrets (API keys, third-party tokens, etc.) declare them in the manifest. The platform injects them into the app's process environment at launch from a per-env master file the operator maintains.
+
+### App-side contract
+
+Two things in the app:
+
+1. **Declare the names** in `latarnia.json`:
+   ```json
+   {
+     "config": {
+       "requires_secrets": ["VOYAGE_API_KEY", "ANTHROPIC_API_KEY"]
+     }
+   }
+   ```
+2. **Read from `os.environ`** (or your language equivalent) at startup. The platform guarantees these names are populated when the app starts.
+
+```python
+import os, sys
+voyage_key = os.environ.get("VOYAGE_API_KEY")
+if not voyage_key:
+    sys.exit("missing required secret: VOYAGE_API_KEY")
+```
+
+If a declared secret isn't set on the operator's master file, **the platform refuses to start the app** — the app process never runs, and the dashboard surfaces a red status with detail `"missing required secret: <name>"`. Apps don't need to validate themselves (but it's harmless if they do).
+
+### Operator-side contract
+
+Master file: `/opt/latarnia/{env}/secrets.env`, **mode 600** (owned by `felipe`).
+
+```
+# /opt/latarnia/tst/secrets.env
+VOYAGE_API_KEY=pa-xxxxx
+ANTHROPIC_API_KEY=sk-ant-xxxxx
+GITHUB_TOKEN='value with $ and spaces'
+```
+
+Format rules:
+- One `KEY=value` per line. Single-line only — multi-line values are not supported in v1.
+- `# comment` lines and blank lines are tolerated.
+- Wrap values in **single quotes** to keep `$`, `=`, and whitespace literal: `KEY='val with $ and spaces'`. Without quotes, systemd would expand `$VAR` references.
+- File mode must be **600 or stricter**. The platform refuses to read a wider-mode file and logs a warning.
+
+To **rotate** a secret: edit the file, save, restart the consuming apps (dashboard restart button or `POST /api/apps/{id}/process/restart`). No platform restart needed.
+
+To **inspect** what's set: `GET /api/secrets`. Returns names + last-set time + apps consuming each name. **Never returns values** — the listing is purely metadata.
+
+### What the platform does NOT do (v1)
+
+- Encrypt the master file at rest (operator may layer disk encryption).
+- Audit-log who set / read which secret when.
+- Rotate secrets on a schedule or auto-restart consuming apps when secrets change.
+- Provide a CLI binary to set values (file-only via `$EDITOR`).
+- Expose secret values via any REST endpoint, log line, or metadata field. Ever.
+- Share secrets across `tst` and `prd` (intentionally — set per-env values explicitly).
+
+### How injection works (informational)
+
+| OS | Mechanism |
+|---|---|
+| Linux | Platform writes `/opt/latarnia/{env}/secrets/{app_id}.env` (mode 600) containing only the keys this app declared. The generated systemd unit references it via `EnvironmentFile=-/opt/latarnia/{env}/secrets/{app_id}.env`. |
+| macOS dev | Platform merges the same filtered key/value map into `subprocess.Popen(..., env=...)` — no per-app file written. |
+
+In both cases, an app only ever sees values it declared. An app that didn't declare `KEY` doesn't get `KEY` in its environment, even if the master file has it.
+
+### Migration note for apps that already used `requires_secrets` informally
+
+Earlier versions silently accepted `requires_secrets` in `latarnia.json` and did nothing with it. **As of P-0006, the platform enforces it.** If an app declared the field without the operator setting matching values in `secrets.env`, the app will refuse to start. The fix is one operator action: populate the master file with the declared keys.
 
 ---
 

@@ -15,7 +15,7 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ..core.config import ConfigManager
 from .port_manager import PortManager
@@ -54,6 +54,21 @@ class AppConfig(BaseModel):
     restart_policy: str = Field(default="on-failure", pattern=r'^(always|on-failure|never)$')
     redis_streams_publish: List[str] = Field(default_factory=list)
     redis_streams_subscribe: List[str] = Field(default_factory=list)
+    # P-0006: names of environment variables the platform must inject from
+    # the per-env master secrets file (`/opt/latarnia/{env}/secrets.env`)
+    # at app launch. Apps refuse to start if any declared name is missing
+    # from the master file. Values never appear in logs or REST responses.
+    requires_secrets: List[str] = Field(default_factory=list)
+
+    @field_validator("requires_secrets")
+    @classmethod
+    def _no_empty_secret_names(cls, v: List[str]) -> List[str]:
+        for name in v:
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(
+                    "requires_secrets entries must be non-empty strings"
+                )
+        return v
 
 
 class AppInstall(BaseModel):
