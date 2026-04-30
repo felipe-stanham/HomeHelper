@@ -135,7 +135,39 @@ loginctl show-user felipe --property=Linger   # → Linger=yes
 
 The platform logs a `WARNING` at startup if linger is disabled.
 
-## 5. Enable and start
+## 5. Create the per-env secrets master files (P-0006)
+
+Apps that declare `config.requires_secrets` in their manifest will refuse to start unless the named keys are present in the env's master secrets file. Create empty files now (or populate with the keys your apps need); the operator can edit them later with `$EDITOR`.
+
+```
+sudo -u felipe touch /opt/latarnia/tst/secrets.env
+sudo -u felipe touch /opt/latarnia/prd/secrets.env
+sudo chmod 600 /opt/latarnia/{tst,prd}/secrets.env
+sudo chown felipe:felipe /opt/latarnia/{tst,prd}/secrets.env
+```
+
+File format (per env):
+```
+# /opt/latarnia/tst/secrets.env
+VOYAGE_API_KEY=pa-xxxxx
+ANTHROPIC_API_KEY=sk-ant-xxxxx
+# Wrap values in single quotes if they contain $, =, or spaces:
+GITHUB_TOKEN='ghp_xx with literal $ and spaces'
+```
+
+Rules:
+- One `KEY=value` per line. **Single-line values only.** Use `\n` escapes if you absolutely need a newline (rare for API keys).
+- `# comments` and blank lines are tolerated.
+- Single-quoted values keep `$`/`=`/spaces literal (systemd otherwise expands `$VAR`).
+- File mode **must be 600 or stricter**. The platform refuses to read a wider-mode file and logs a warning.
+
+The platform reads this file on every app launch (no caching), so changes take effect on the next `start_service` / `restart_service` call. **Do NOT** restart the platform itself to pick up rotated secrets — restart only the consuming apps.
+
+The platform writes per-app filtered copies to `/opt/latarnia/{env}/secrets/{app_id}.env` automatically; do not edit those (they're regenerated on every launch).
+
+**Pre-P-0006 cleanup:** if any operator workaround `~felipe/.config/systemd/user/latarnia-{env}-{app}.service.d/secrets.conf` files exist (the manual drop-in pattern), delete them after the master file is populated — the platform now owns secret injection.
+
+## 6. Enable and start
 ```
 sudo systemctl daemon-reload
 sudo systemctl enable --now latarnia-tst.service
@@ -143,9 +175,10 @@ sudo systemctl enable --now latarnia-prd.service
 sudo systemctl status latarnia-tst.service latarnia-prd.service
 ```
 
-## 6. Verify
+## 7. Verify
 ```
 systemctl list-units --type=service --all | grep -i latarnia
 curl http://localhost:8000/health   # TST
 curl http://localhost:8080/health   # PRD
+curl http://localhost:8000/api/secrets | jq    # P-0006: should list configured key names (no values)
 ```

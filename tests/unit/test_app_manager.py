@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
+from pydantic import ValidationError
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -656,6 +657,46 @@ class TestEvolvedManifest:
         assert manifest.config.has_web_ui is True
         assert manifest.config.redis_streams_publish == ["crm.contacts.created"]
         assert manifest.config.redis_streams_subscribe == ["scraper.leads.new"]
+
+    def test_manifest_requires_secrets_default_empty(self):
+        """P-0006 cap-001: omitting requires_secrets yields []."""
+        data = {
+            "name": "x", "type": "service", "description": "x",
+            "version": "1.0.0", "author": "a", "main_file": "app.py",
+            "config": {},
+        }
+        manifest = AppManifest(**data)
+        assert manifest.config.requires_secrets == []
+
+    def test_manifest_requires_secrets_valid_list(self):
+        """P-0006 cap-001: list of strings is accepted."""
+        data = {
+            "name": "x", "type": "service", "description": "x",
+            "version": "1.0.0", "author": "a", "main_file": "app.py",
+            "config": {"requires_secrets": ["VOYAGE_API_KEY", "ANTHROPIC_API_KEY"]},
+        }
+        manifest = AppManifest(**data)
+        assert manifest.config.requires_secrets == ["VOYAGE_API_KEY", "ANTHROPIC_API_KEY"]
+
+    def test_manifest_requires_secrets_rejects_non_list(self):
+        """P-0006 cap-001: a string (not a list) is rejected."""
+        data = {
+            "name": "x", "type": "service", "description": "x",
+            "version": "1.0.0", "author": "a", "main_file": "app.py",
+            "config": {"requires_secrets": "VOYAGE_API_KEY"},
+        }
+        with pytest.raises(ValidationError):
+            AppManifest(**data)
+
+    def test_manifest_requires_secrets_rejects_empty_string_entry(self):
+        """P-0006 cap-001: empty/whitespace-only entries are rejected."""
+        data = {
+            "name": "x", "type": "service", "description": "x",
+            "version": "1.0.0", "author": "a", "main_file": "app.py",
+            "config": {"requires_secrets": ["VALID_KEY", ""]},
+        }
+        with pytest.raises(ValidationError):
+            AppManifest(**data)
 
     def test_manifest_with_requires(self):
         """Test manifest parsing with dependency declarations"""

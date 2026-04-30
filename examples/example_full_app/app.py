@@ -48,6 +48,7 @@ db_url: Optional[str] = None
 redis_url: Optional[str] = None
 mcp_port: Optional[int] = None
 data_dir: Optional[Path] = None
+api_key: Optional[str] = None  # EXAMPLE_API_KEY — injected via secrets.env
 
 logger = logging.getLogger("example_full_app")
 
@@ -279,6 +280,7 @@ async def health():
             "mcp_tools": 3,
             "db_connected": db_url is not None,
             "streams_active": redis_url is not None,
+            "api_key_configured": api_key is not None,
             "items_created": app_state.get("items_created", 0),
             "data_dir": str(data_dir) if data_dir else None,
             "last_check": datetime.now().isoformat(),
@@ -453,6 +455,7 @@ WEB_UI_HTML = """<!DOCTYPE html>
             <li>MCP server exposing 3 tools: list_items, add_item, get_status</li>
             <li>Redis Streams: publishes <code>example.events.created</code>,
                 subscribes to <code>example.commands.process</code></li>
+            <li>Secret: <code>EXAMPLE_API_KEY</code> (operator-configured via secrets.env)</li>
             <li>Depends on <code>example_companion</code> &ge; 1.0.0</li>
         </ul>
     </div>
@@ -626,7 +629,7 @@ def _run_mcp_server(port: int):
 # ---------------------------------------------------------------------------
 
 def main():
-    global db_url, redis_url, mcp_port, data_dir, app_state
+    global db_url, redis_url, mcp_port, data_dir, app_state, api_key
 
     parser = argparse.ArgumentParser(description="Example Full App")
     parser.add_argument("--port", type=int, default=8101, help="REST API port")
@@ -644,6 +647,8 @@ def main():
     redis_url = args.redis_url
     mcp_port = args.mcp_port
     data_dir = Path(args.data_dir) if args.data_dir else None
+    # Injected by Latarnia SecretManager via EnvironmentFile= (Linux) or Popen env= (Darwin).
+    api_key = os.environ.get("EXAMPLE_API_KEY")
 
     # Setup logging (stdout only — Latarnia routes to journald on Linux).
     setup_logging()
@@ -657,6 +662,7 @@ def main():
     logger.info("  DB URL:    %s", "set" if db_url else "not set")
     logger.info("  Redis URL: %s", "set" if redis_url else "not set")
     logger.info("  Data dir:  %s", data_dir or "not set")
+    logger.info("  API key:   %s", "set" if api_key else "not set")
     logger.info("  State:     %s", app_state)
 
     # Start MCP server in background thread

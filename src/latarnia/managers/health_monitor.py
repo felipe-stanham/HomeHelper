@@ -621,7 +621,21 @@ class HealthMonitor:
         ActiveState with the latest /health result.
 
         Used by `/api/apps` to populate each app's `overall_status` field.
+
+        Special case (P-0006 cap-005): when the app is in registry status
+        ERROR with a `runtime_info.error_message` set, surface that as RED
+        directly. This handles refuse-to-start cases (missing required
+        secrets, etc.) where no systemd unit was ever written and no
+        health probe ever ran — without this short-circuit such apps
+        would surface as grey ("no status") and the operator would miss
+        the actionable error.
         """
+        app = self.app_manager.registry.get_app(app_id)
+        if app is not None and app.status == AppStatus.ERROR:
+            err_msg = getattr(app.runtime_info, "error_message", None)
+            if err_msg:
+                return {"overall_status": OverallStatus.RED.value, "detail": err_msg}
+
         systemd_states = self.get_systemd_states()
         systemd_state = systemd_states.get(app_id) if systemd_states else None
         health_result = self.health_results.get(app_id)

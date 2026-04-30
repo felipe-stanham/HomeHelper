@@ -182,7 +182,19 @@ graph TB
   - Build the connection URL passed to apps via `--db-url env:DATABASE_URL` + `Environment=DATABASE_URL=...` in the systemd unit.
 - **Extensions list (`DEFAULT_EXTENSIONS`)**: append-only, hardcoded today. `vector` was added for embeddings / RAG / semantic search. Adding more (postgis, citext, etc.) is a one-line edit; if per-app extension overrides ever become needed, refactor to manifest-driven at that point.
 
-### 10. Redis Message Bus
+### 10. Secret Manager
+- **Purpose**: Inject runtime secrets (API keys, tokens) into per-app process environments without leaking values to logs, unit files, or other apps. Owns the per-env master secret store and per-app filtered files (P-0006).
+- **Module**: `src/latarnia/managers/secret_manager.py`. Wired into both `ServiceManager` (Linux) and `SubprocessLauncher` (Darwin) so refuse-to-start + injection work uniformly across launchers.
+- **Master file**: `/opt/latarnia/{env}/secrets.env`, mode 600, operator-edited via `$EDITOR`. Dotenv format (`KEY=value` per line, `#` comments, blank lines, single-quoted values for `$`/`=`/spaces). The platform refuses to read a wider-mode file and logs a warning.
+- **Per-app files**: `/opt/latarnia/{env}/secrets/{app_id}.env`, mode 600, written by `materialize()` before each `start_service`. Contains exactly the keys declared in `manifest.config.requires_secrets`. Overwritten on every launch (idempotent).
+- **Linux injection**: generated systemd unit references the per-app file via `EnvironmentFile=-/opt/latarnia/{env}/secrets/{app_id}.env` (leading `-` = ignore-if-missing).
+- **Darwin injection**: filtered key/value map merged into `subprocess.Popen(env=...)`; no file written.
+- **Refuse-to-start gate**: runs before port allocation in both launchers. On missing key, sets `app.runtime_info.error_message = "missing required secret: <name>"`, marks app `ERROR`, returns `False`. Surfaces as `overall_status: red` via the existing P-0005 cap-005 plumbing — no new fields.
+- **REST**: `GET /api/secrets` returns `[{name, set_at, used_by: [app_id, ...]}]`. **Never** returns values. Listing is read-only; rotation is `$EDITOR` + restart consuming apps.
+- **Logging contract**: no method on this manager ever logs a secret value. Verified by a sentinel-value unit test.
+- **Out of v1**: encryption at rest, audit log, rotation automation, CLI binary, dashboard panel, multi-line values, cross-env sharing.
+
+### 11. Redis Message Bus
 - **Purpose**: Inter-app communication and event system
 - **Responsibilities**:
   - Pub/Sub messaging between apps
@@ -191,7 +203,7 @@ graph TB
   - Configuration change notifications
   - App status updates
 
-### 11. Web Proxy
+### 12. Web Proxy
 - **Purpose**: Reverse proxy that exposes app-owned web UIs through the platform
 - **Routes**: `GET|POST|... /apps/{app_name}/{path}` (HTTP), `WS /apps/{app_name}/{path}` (WebSocket)
 - **Redirect**: Bare `/apps/{app_name}` issues a 307 to `/apps/{app_name}/`
