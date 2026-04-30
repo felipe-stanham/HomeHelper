@@ -14,12 +14,15 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from enum import Enum
 
 from ..core.config import ConfigManager
+
+if TYPE_CHECKING:
+    from .secret_manager import SecretManager
 from .app_manager import AppManager, AppType, AppStatus
 from .port_manager import PortManager
 
@@ -84,13 +87,19 @@ class ServiceManager:
     """Main service manager for systemd integration"""
     
     def __init__(self, config_manager: ConfigManager, app_manager: AppManager,
-                 port_manager: Optional[PortManager] = None):
+                 port_manager: Optional[PortManager] = None,
+                 secret_manager: Optional["SecretManager"] = None):
         self.config_manager = config_manager
         self.app_manager = app_manager
         # PortManager is optional for backward compat with older callers/tests;
         # when present, start_service auto-allocates REST and MCP ports so the
         # systemd path matches SubprocessLauncher's one-shot contract.
         self.port_manager = port_manager
+        # SecretManager is also optional for backward compat. When present,
+        # start_service refuses to launch apps with missing required secrets
+        # and writes a per-app filtered file the unit references via
+        # `EnvironmentFile=-...` (P-0006).
+        self.secret_manager = secret_manager
         self.logger = logging.getLogger("latarnia.service_manager")
         
         # Service tracking
@@ -408,6 +417,13 @@ Environment=ENV={self.env}
             for env_var in env_vars:
                 service_template += f"Environment={env_var}\n"
 
+        # P-0006: reference the per-app filtered secrets file. Leading `-`
+        # makes it ignore-if-missing, so apps with no `requires_secrets` are
+        # unaffected (no file is ever written for them).
+        if self.secret_manager is not None:
+            secrets_file = self.secret_manager.per_app_path(app_id)
+            service_template += f"EnvironmentFile=-{secrets_file}\n"
+
         service_template += "\n[Install]\nWantedBy=default.target\n"
 
         return service_template
@@ -477,6 +493,22 @@ Environment=ENV={self.env}
                 self.logger.error(f"App {app_id} is not a service app")
                 return False
 
+            # P-0006: refuse-to-start gate. Run BEFORE port allocation so a
+            # missing secret leaves no port allocations behind.
+            if self.secret_manager is not None:
+                secret_result = self.secret_manager.validate(app)
+                if not secret_result.ok:
+                    self.logger.error(
+                        "Refusing to start %s: %s", app_id, secret_result.detail,
+                    )
+                    app.runtime_info.error_message = secret_result.detail
+                    self.app_manager.registry.update_app(
+                        app_id,
+                        status=AppStatus.ERROR,
+                        runtime_info=app.runtime_info,
+                    )
+                    return False
+
             # Allocate ports if PortManager is wired and no port is set yet.
             allocated_port = False
             allocated_mcp_port = False
@@ -510,6 +542,27 @@ Environment=ENV={self.env}
                     if app.mcp_info:
                         app.mcp_info.mcp_port = None
                 return False
+
+            # P-0006: write the per-app filtered secrets file referenced by
+            # the unit's `EnvironmentFile=-...` line. Idempotent — overwrites
+            # stale content from a previous launch with current master values.
+            # Validation already ran above; this only fails on disk I/O.
+            if self.secret_manager is not None:
+                try:
+                    self.secret_manager.materialize(app)
+                except OSError as e:
+                    self.logger.error(
+                        "Failed to write per-app secrets file for %s: %s",
+                        app_id, type(e).__name__,
+                    )
+                    if allocated_port and self.port_manager is not None:
+                        self.port_manager.release_port(app_id)
+                        app.runtime_info.assigned_port = None
+                    if allocated_mcp_port and self.port_manager is not None:
+                        self.port_manager.release_mcp_port(app_id)
+                        if app.mcp_info:
+                            app.mcp_info.mcp_port = None
+                    return False
 
             # Now actually start the unit.
             result = subprocess.run(

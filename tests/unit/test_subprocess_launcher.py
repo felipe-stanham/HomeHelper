@@ -181,6 +181,76 @@ class TestSubprocessLauncher:
             mock_stop.assert_called_once_with("my-service")
             mock_start.assert_called_once_with("my-service")
 
+    @patch("latarnia.managers.subprocess_launcher.subprocess.Popen")
+    def test_start_service_merges_secrets_into_popen_env(
+        self, mock_popen, launcher, mock_app_manager, sample_service_app,
+        temp_dirs, mock_config_manager,
+    ):
+        """cap-004: declared secrets land in Popen env=, undeclared do not."""
+        from latarnia.managers.secret_manager import SecretManager
+        import os as _os
+
+        mock_config_manager.get_data_dir = Mock(side_effect=lambda app_id=None: temp_dirs / "data" / (app_id or "")) if False else mock_config_manager.get_data_dir
+        # Override to a real dir so SecretManager finds the env root.
+        env_root = temp_dirs
+        mock_config_manager.get_data_dir = Mock(return_value=env_root / "data")
+        (env_root / "data").mkdir(exist_ok=True)
+        master = env_root / "secrets.env"
+        master.write_text("A=1\nB=2\nC=3\n")
+        _os.chmod(master, 0o600)
+
+        sm = SecretManager(mock_config_manager, mock_app_manager, env="dev")
+        launcher.secret_manager = sm
+
+        sample_service_app.manifest.config.requires_secrets = ["A", "B"]
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        mock_proc = MagicMock()
+        mock_proc.pid = 4242
+        mock_popen.return_value = mock_proc
+
+        ok = launcher.start_service("my-service")
+
+        assert ok is True
+        # Popen received env= containing A and B but not C.
+        _, kwargs = mock_popen.call_args
+        env_passed = kwargs["env"]
+        assert env_passed["A"] == "1"
+        assert env_passed["B"] == "2"
+        assert "C" not in env_passed
+
+    @patch("latarnia.managers.subprocess_launcher.subprocess.Popen")
+    def test_start_service_refuses_when_secret_missing(
+        self, mock_popen, launcher, mock_app_manager, sample_service_app,
+        temp_dirs, mock_config_manager,
+    ):
+        """cap-005 on Darwin: missing secret → no Popen, no port allocation."""
+        from latarnia.managers.secret_manager import SecretManager
+        import os as _os
+
+        env_root = temp_dirs
+        mock_config_manager.get_data_dir = Mock(return_value=env_root / "data")
+        (env_root / "data").mkdir(exist_ok=True)
+        master = env_root / "secrets.env"
+        master.write_text("A=1\n")
+        _os.chmod(master, 0o600)
+
+        sm = SecretManager(mock_config_manager, mock_app_manager, env="dev")
+        launcher.secret_manager = sm
+
+        sample_service_app.manifest.config.requires_secrets = ["A", "B"]
+        mock_app_manager.registry.get_app.return_value = sample_service_app
+
+        ok = launcher.start_service("my-service")
+
+        assert ok is False
+        mock_popen.assert_not_called()
+        # No port allocation attempted.
+        launcher.port_manager.allocate_port.assert_not_called()
+        # error_message names the missing key (B), never a value.
+        assert "missing required secret" in (sample_service_app.runtime_info.error_message or "")
+        assert "B" in (sample_service_app.runtime_info.error_message or "")
+
     def test_get_process_info_includes_uptime(self, launcher):
         launcher.processes["my-service"] = {
             "pid": 4242,
