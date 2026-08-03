@@ -237,6 +237,9 @@ def _enroll_user(ctx, username, admin_token):
     assert r.status_code == 200
     setup_token = r.json()["setup_url"].split("token=")[1]
     client.cookies.clear()
+    # The TOTP secret is provisioned lazily when the QR setup page renders, so
+    # the GET is required before the secret can be read (same as cap-024 above).
+    assert client.get(f"/auth/setup?token={setup_token}").status_code == 200
     user = users.get_user_by_username(username)
     secret = totp.get_existing_secret(user["id"])
     r = client.post(f"/auth/setup?token={setup_token}",
