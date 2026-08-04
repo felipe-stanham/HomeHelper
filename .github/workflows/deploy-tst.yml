@@ -7,7 +7,9 @@ on:
 jobs:
   deploy:
     name: Deploy to homeserver (tst)
-    runs-on: self-hosted
+    # Pinned to the homeserver label: tst exists only there, and a bare
+    # `self-hosted` would let this job land on a prd-only host (T-0005).
+    runs-on: [self-hosted, homeserver]
 
     steps:
       - name: Capture pre-deploy state
