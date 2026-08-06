@@ -254,6 +254,7 @@ These tests require the Playwright MCP server and a running local dev instance o
 
 - **test_totp_login:** `POST /auth/login` with username `admin` + a valid 6-digit code. -> 302/303 with `latarnia_session` cookie. Replaying the same code within its 30s window -> rejected.
 - **test_verify_headers:** `GET /auth/verify` with a valid session cookie and `X-Forwarded-Uri: /apps/example_full_app/`. -> 200 with `X-Latarnia-User`, `X-Latarnia-App-Role`, `X-Latarnia-Is-Super`. Without a cookie -> 401.
+- **test_dev_totp_bypass_is_dev_only (T-0010):** Build the auth gate with `ENV=tst` and `LATARNIA_DEV_TOTP_BYPASS=1`. -> `dev_totp_bypass_enabled()` returns `False` and the secrets loader is never called; same for `ENV=prd`. With `ENV=dev` + the flag, `POST /auth/login` with username `admin` and code `000000` -> 303 with a `latarnia_session` cookie; without the flag the same request -> 401. An unknown or inactive username -> 401 even with the bypass active.
 - **test_login_is_case_insensitive (P-0011):** With the superuser enrolled as `admin`, `POST /auth/login` with username `ADMIN` + a valid 6-digit code. -> 303 to `/dashboard` with a `latarnia_session` cookie. `POST /api/auth/users` `{"username":"ADMIN"}` as a superuser -> 409 `username already exists`, and `SELECT username FROM users` never contains an uppercase character.
 
 ### Roles
