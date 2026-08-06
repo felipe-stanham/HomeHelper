@@ -3,6 +3,16 @@ name: Deploy to TST
 on:
   push:
     branches: [tst]
+  # Escape hatch (T-0011), mirroring deploy-prd.yml: re-deploy the current `tst`
+  # without needing an empty commit. Added after a promotion where two
+  # consecutive pushes to `tst` created no workflow run at all — Actions enabled,
+  # workflow active, trigger correct, YAML valid, both runners online, nothing
+  # queued. With no manual trigger there was no way to deploy at all.
+  #
+  # NOTE: GitHub only exposes workflow_dispatch for workflows present on the
+  # DEFAULT branch (`main`). This trigger is therefore inert until it reaches
+  # main; once there, it can be dispatched against any ref, including `tst`.
+  workflow_dispatch:
 
 jobs:
   deploy:
