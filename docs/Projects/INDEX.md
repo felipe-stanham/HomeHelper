@@ -11,6 +11,7 @@ Status values: `[ ] Not Started`, `[IN PROGRESS]`, `[DONE]`, `[CANCELLED]`.
 ## Active
 
 - [P-0003](P-0003.md) — Dynamic MCP Port Allocation — [IN PROGRESS] — 2026-04-10
+- [P-0011](P-0011.md) — Case-Insensitive Usernames — [ ] Not Started — 2026-08-06
 
 ---
 
