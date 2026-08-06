@@ -9,9 +9,12 @@ on:
   # workflow active, trigger correct, YAML valid, both runners online, nothing
   # queued. With no manual trigger there was no way to deploy at all.
   #
-  # NOTE: GitHub only exposes workflow_dispatch for workflows present on the
-  # DEFAULT branch (`main`). This trigger is therefore inert until it reaches
-  # main; once there, it can be dispatched against any ref, including `tst`.
+  # Verified 2026-08-06: dispatchable via the REST API against a non-default ref
+  # even before this trigger reached `main` —
+  #   gh workflow run "Deploy to TST" --ref tst
+  # succeeded and deployed. (The "must be on the default branch" rule applies to
+  # the Run-workflow button in the UI, not to the API.) Use the CLI form above if
+  # the button is not showing.
   workflow_dispatch:
 
 jobs:
