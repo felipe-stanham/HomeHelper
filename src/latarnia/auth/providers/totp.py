@@ -29,12 +29,21 @@ class TOTPAuthProvider:
 
     auth_method = "totp"
 
-    def __init__(self, auth_db, key_loader: Callable[[], bytes], issuer: str = "Latarnia"):
+    def __init__(self, auth_db, key_loader: Callable[[], bytes], issuer: str = "Latarnia",
+                 dev_bypass: Optional[Callable[[], bool]] = None):
         """`key_loader` returns the raw 32-byte AES key (loaded lazily so the
-        secret can come from secrets.env at call time, never cached on disk)."""
+        secret can come from secrets.env at call time, never cached on disk).
+
+        `dev_bypass` (T-0010) is an optional predicate that, when it returns
+        True, makes `validate` accept any 6-digit code. Default None means no
+        bypass exists at all, so this class is safe by construction — the policy
+        decision of when a bypass is permissible lives in main.py, which owns
+        ENV and the secrets file, not in this crypto module.
+        """
         self.db = auth_db
         self._key_loader = key_loader
         self.issuer = issuer
+        self._dev_bypass = dev_bypass
 
     # ------------------------------------------------------------------
     # Crypto (pure functions — unit-testable without a DB)
@@ -124,6 +133,17 @@ class TOTPAuthProvider:
         code = "".join(ch for ch in str(code) if ch.isdigit())
         if len(code) != 6:
             return False
+
+        # T-0010 dev bypass. Deliberately placed after the length check (the form
+        # contract still holds) and before any DB access, so it also sidesteps the
+        # replay defense below — repeated automated logins inside one 30s window
+        # would otherwise fail. Never silent: every bypassed login is logged.
+        if self._dev_bypass is not None and self._dev_bypass():
+            logger.warning(
+                "TOTP validation BYPASSED for user %s — dev bypass is active. "
+                "This must never happen outside ENV=dev.", user_id
+            )
+            return True
 
         row = self.db.query_one(
             "SELECT credential_data FROM user_credentials "

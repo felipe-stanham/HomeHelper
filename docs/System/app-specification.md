@@ -1240,6 +1240,61 @@ To **rotate** a secret: edit the file, save, restart the consuming apps (dashboa
 
 To **inspect** what's set: `GET /api/secrets`. Returns names + last-set time + apps consuming each name. **Never returns values** — the listing is purely metadata.
 
+### Platform-level secrets (not app-declared)
+
+A few keys in the master file are consumed by the platform itself rather than injected into
+any App. They are read directly, never via the per-app filtered view, and never appear in an
+App's environment.
+
+| Key | Purpose | Environments |
+|---|---|---|
+| `LATARNIA_TOTP_ENC_KEY` | 32-byte base64 AES-256-GCM key encrypting TOTP secrets at rest. Missing → TOTP setup/login fail (logged once at startup). | all |
+| `LATARNIA_JWT_SECRET` | HS256 signing secret for machine tokens. Missing → token issuance/validation fail. | all |
+| `LATARNIA_DEV_TOTP_BYPASS` | **dev only.** Set truthy (`1`, `true`, `yes`, `on`) to make TOTP validation accept any 6-digit code, so browser test automation can log in. See below. | `dev` only |
+
+#### `LATARNIA_DEV_TOTP_BYPASS` (T-0010)
+
+Exists so Playwright-style browser automation can get past `/auth/login`, which is otherwise
+impossible without the user's TOTP secret. It also sidesteps the replay defense, which
+rejects a second login inside the same 30 s window and would break per-test logins.
+
+**Two independent conditions must both hold** for the bypass to take effect:
+
+1. The **raw** `ENV` variable is exactly the three characters `dev`.
+2. `LATARNIA_DEV_TOTP_BYPASS` parses truthy.
+
+Gating on `ENV` alone was rejected: `MEMORY.md` `deploy-needs-host-config-json` records
+per-host config going missing on a **prd** host, so config drift here is demonstrated, not
+hypothetical. `ENV` is evaluated first, so `tst` and `prd` cost one string comparison and
+never read `secrets.env` on the login path.
+
+> **Condition 1 does not use `ConfigManager.get_env()`,** and this is load-bearing. That
+> helper is deliberately lenient: anything outside `{dev, tst, prd}` falls back to `dev`, and
+> so does an unset `ENV`. Correct for picking a database name, catastrophic for an auth gate —
+> `ENV="PRD "` with a stray trailing space, `ENV=production`, or a missing `ENV=` line all
+> resolve to `dev` and would have satisfied condition 1 **on a production host**. The gate in
+> `src/latarnia/auth/dev_bypass.py` therefore compares the raw variable exactly: no case
+> folding (`DEV` is refused), no whitespace tolerance (`" dev "` is refused), no default
+> (unset is refused). A dev box with a typo just loses the bypass, which is the harmless
+> direction to fail.
+
+Behaviour when active:
+
+- Any 6-digit code authenticates any **active** user. The 6-digit form contract still holds —
+  a 5-digit code is still rejected.
+- It skips TOTP, **not identity**: an unknown username and an inactive (invited but
+  un-enrolled) user are still 401.
+- First-run `/auth/setup` completes without scanning a QR, which is the fast path to a
+  superuser on a fresh dev database. This applies to **every** enrollment, not just the
+  bootstrap superuser: an invited user's `/auth/setup?token=...` link can also be completed
+  with any 6-digit code while the bypass is on. Intended for throwaway dev databases.
+- A WARNING naming the user is logged on every bypassed validation, and a WARNING banner is
+  logged at startup. A bypassed login is never silent.
+- If the key is ever present while `ENV != dev`, the platform logs an **ERROR** at startup
+  saying it is being ignored — the alarm for exactly the config-drift scenario above.
+
+Never add this key to a `tst` or `prd` `secrets.env`.
+
 ### What the platform does NOT do (v1)
 
 - Encrypt the master file at rest (operator may layer disk encryption).
