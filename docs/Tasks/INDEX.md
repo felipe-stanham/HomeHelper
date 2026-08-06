@@ -9,3 +9,4 @@
 | [T-0005](T-0005.md) | Second prd instance on Hetzner + multi-host prd deploy | [DONE] |
 | [T-0006](T-0006.md) | Fix `_enroll_user` test helper — 3 red P-0010 integration tests | [DONE] |
 | [T-0007](T-0007.md) | Commit `tests/cache/` — tester agent script cache | [DONE] |
+| [T-0008](T-0008.md) | Reconcile P-0003 / P-0010 status drift in `docs/SYSTEM.md` | [DONE] |
