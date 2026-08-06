@@ -10,7 +10,7 @@ Status values: `[ ] Not Started`, `[IN PROGRESS]`, `[DONE]`, `[CANCELLED]`.
 
 ## Active
 
-- [P-0003](P-0003.md) — Dynamic MCP Port Allocation — [IN PROGRESS] — 2026-04-10
+_None._
 
 ---
 
@@ -18,6 +18,7 @@ Status values: `[ ] Not Started`, `[IN PROGRESS]`, `[DONE]`, `[CANCELLED]`.
 
 - [P-0001](P-0001.md) — Latarnia System — [DONE] — (initial)
 - [P-0002](P-0002.md) — Latarnia — Unified Mini-App Platform — [DONE] — 2026-03-25
+- [P-0003](P-0003.md) — Dynamic MCP Port Allocation — [DONE] — 2026-04-10
 - [P-0004](P-0004.md) — Environment-Scoped App Services + Bootstrap Docs — [DONE] — 2026-04-24
 - [P-0005](P-0005.md) — Activate Systemd Per-App Services — [DONE] — 2026-04-24
 - [P-0006](P-0006.md) — Secret Manager — [DONE] — 2026-04-29
