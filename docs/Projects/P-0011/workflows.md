@@ -37,7 +37,7 @@ without weakening the message.
 
 ```mermaid
 flowchart TD
-    A["POST /api/users<br/>{username: 'Felipe'}<br/>Superuser only"] --> B["body.username.strip()<br/>routes.py:340 — unchanged"]
+    A["POST /api/auth/users<br/>{username: 'Felipe'}<br/>Superuser only"] --> B["body.username.strip()<br/>routes.py:340 — unchanged"]
     B --> C{"USERNAME_RE match?<br/>^[A-Za-z0-9._-]{1,64}$<br/>unchanged — accepts mixed case"}
     C -->|no| D["400 — username must be 1-64 chars<br/>of letters, digits, '.', '_', '-'"]
     C -->|yes| E["UserStore.get_user_by_username('Felipe')"]

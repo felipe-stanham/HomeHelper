@@ -20,6 +20,26 @@ from typing import List
 from ..core.config import ConfigManager
 from ..core.pg_client import PgClient
 
+# Server severities that deserve the operator's attention in a deploy log.
+# Anything quieter (NOTICE, INFO, LOG, DEBUG) is routine Postgres chatter.
+_LOUD_SEVERITIES = {"WARNING", "ERROR", "FATAL", "PANIC"}
+
+
+def _forward_notice(logger: logging.Logger, diag) -> None:
+    """Forward a Postgres server notice to the platform logger (P-0011).
+
+    psycopg collects notices and drops them by default, which would silence the
+    RAISE WARNING that migration 007 emits for every username it renames.
+    """
+    severity = (getattr(diag, "severity_nonlocalized", None)
+                or getattr(diag, "severity", None) or "").upper()
+    message = (getattr(diag, "message_primary", None) or "").strip()
+    if severity in _LOUD_SEVERITIES:
+        logger.warning("migration: %s", message)
+    else:
+        logger.debug("migration: %s", message)
+
+
 SCHEMA_VERSIONS_DDL = """
 CREATE TABLE IF NOT EXISTS schema_versions (
     id SERIAL PRIMARY KEY,
@@ -92,6 +112,9 @@ class AuthDB:
             return
 
         with self.pg_client.transaction(self.db_name) as conn:
+            # Attached before the first migration runs so RAISE WARNING from any
+            # of them reaches the log (P-0011).
+            conn.add_notice_handler(lambda diag: _forward_notice(self.logger, diag))
             try:
                 for mig in pending:
                     sql_text = mig.read_text()

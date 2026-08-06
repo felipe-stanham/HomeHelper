@@ -11,7 +11,6 @@ Status values: `[ ] Not Started`, `[IN PROGRESS]`, `[DONE]`, `[CANCELLED]`.
 ## Active
 
 - [P-0003](P-0003.md) — Dynamic MCP Port Allocation — [IN PROGRESS] — 2026-04-10
-- [P-0011](P-0011.md) — Case-Insensitive Usernames — [ ] Not Started — 2026-08-06
 
 ---
 
@@ -26,3 +25,4 @@ Status values: `[ ] Not Started`, `[IN PROGRESS]`, `[DONE]`, `[CANCELLED]`.
 - [P-0008](P-0008.md) — Caddy + Authentication & Authorization — [DONE] — 2026-05-12
 - [P-0009](P-0009.md) — App Lifecycle Cleanup — [DONE] — 2026-05-18
 - [P-0010](P-0010.md) — Auth Follow-ups & Authz Hardening — [DONE] — 2026-06-12
+- [P-0011](P-0011.md) — Case-Insensitive Usernames — [DONE] — 2026-08-06

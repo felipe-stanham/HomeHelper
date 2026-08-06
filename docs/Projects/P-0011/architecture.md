@@ -9,11 +9,11 @@ bold. Everything else is context.
 flowchart TD
     subgraph Browser
         LOGIN["templates/auth/login.html<br/>username input — unchanged"]
-        DASH["templates/dashboard.html<br/>Users panel — unchanged,<br/>renders whatever /api/users returns"]
+        DASH["templates/dashboard.html<br/>Users panel — unchanged,<br/>renders whatever /api/auth/users returns"]
     end
 
     subgraph Platform["Latarnia platform process"]
-        ROUTES["auth/routes.py<br/>post_login, POST /api/users<br/>UNCHANGED — USERNAME_RE and all<br/>status codes stay as they are"]
+        ROUTES["auth/routes.py<br/>post_login, POST /api/auth/users<br/>UNCHANGED — USERNAME_RE and all<br/>status codes stay as they are"]
         US["<b>auth/users.py</b><br/><b>normalize_username()</b> — cap-001<br/>UserStore.create_user<br/>UserStore.get_user_by_username"]
         TOTP["auth/providers/totp.py<br/>uses username as QR label only;<br/>secret keyed by user_id"]
         ROLES["auth/roles.py — RoleStore<br/>keyed by user_id; app_name untouched"]
@@ -24,7 +24,7 @@ flowchart TD
     PG[("Postgres<br/>latarnia_platform_{env}<br/>users.username lowercase<br/>+ CHECK constraint")]
 
     LOGIN -->|POST /auth/login| ROUTES
-    DASH -->|GET/POST /api/users| ROUTES
+    DASH -->|GET/POST /api/auth/users| ROUTES
     ROUTES --> US
     ROUTES --> TOTP
     ROUTES --> ROLES

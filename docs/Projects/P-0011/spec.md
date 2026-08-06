@@ -103,10 +103,10 @@ applies migration 007).
 - **test_bootstrap_superuser_lookup_unaffected:** `get_or_create_bootstrap_superuser()` on a
   stub db returning `None` → `INSERT` params tuple is `("admin",)`
 - **test_invite_duplicate_is_case_insensitive:** with active user `felipe` in the DB,
-  `POST /api/users` body `{"username": "Felipe"}` as a Superuser → HTTP 409, detail
+  `POST /api/auth/users` body `{"username": "Felipe"}` as a Superuser → HTTP 409, detail
   `username already exists`, and no second row is created (`SELECT COUNT(*) FROM users
   WHERE lower(username) = 'felipe'` → `1`)
-- **test_invite_stores_lowercase:** with an empty users table, `POST /api/users` body
+- **test_invite_stores_lowercase:** with an empty users table, `POST /api/auth/users` body
   `{"username": "Felipe"}` as a Superuser → HTTP 200 and
   `SELECT username FROM users` → `felipe`
 - **test_login_accepts_mixed_case:** active user `felipe` with a known TOTP secret,
@@ -141,8 +141,9 @@ the live `latarnia_platform_dev`), seeded with the `users` DDL from migration 00
   second run raises nothing and `SELECT username FROM users ORDER BY created_at` is
   identical after both runs
 - **test_migration_007_long_name_stays_within_64:** seed a 64-char username `'A'*64` and
-  its lowercase twin `'a'*64` (older); apply 007 → the newer row's username is 63 chars
-  of `a` followed by `2`, i.e. `length(username) = 64`
+  its lowercase twin `'a'*64` (older); apply 007 → the newer row's username is 62 chars
+  of `a` followed by `2` (`length = 63`); `left(name, 62)` reserves room for a
+  two-digit suffix so a renamed username can never exceed 64
 
 ## cap-003 — Migration notice forwarding
 
@@ -188,7 +189,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A["POST /api/users<br/>{username: 'Felipe'}"] --> B["strip() + USERNAME_RE<br/>(unchanged, accepts mixed case)"]
+    A["POST /api/auth/users<br/>{username: 'Felipe'}"] --> B["strip() + USERNAME_RE<br/>(unchanged, accepts mixed case)"]
     B -->|no match| C["400 — must be 1-64 chars of<br/>letters, digits, '.', '_', '-'"]
     B -->|match| D["UserStore.get_user_by_username('Felipe')<br/>normalizes to 'felipe'"]
     D -->|row found| E["409 — username already exists"]
@@ -237,7 +238,7 @@ existing auth subsystem plus one new migration:
   already the driver (`psycopg[binary]>=3.1.0` in `requirements.txt`), so the API is
   available. This benefits every future migration, not just 007.
 - `templates/dashboard.html` needs no change: it renders `u.username` from
-  `GET /api/users`, which will simply return lowercase values.
+  `GET /api/auth/users`, which will simply return lowercase values.
 - `TotpProvider` uses `username` only as the QR `account_name` label
   (`auth/providers/totp.py:87,117`); the secret is keyed by `user_id`. Already-enrolled
   authenticator apps keep displaying their original mixed-case label. Cosmetic, no
