@@ -11,3 +11,4 @@
 | [T-0007](T-0007.md) | Commit `tests/cache/` — tester agent script cache | [DONE] |
 | [T-0008](T-0008.md) | Reconcile P-0003 / P-0010 status drift in `docs/SYSTEM.md` | [DONE] |
 | [T-0009](T-0009.md) | Close P-0003 — `[DONE]` with Scope 3 integration test waived | [DONE] |
+| [T-0010](T-0010.md) | Dev-only TOTP bypass for browser test automation | [DONE] |
