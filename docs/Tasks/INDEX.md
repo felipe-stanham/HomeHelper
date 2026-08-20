@@ -13,3 +13,4 @@
 | [T-0009](T-0009.md) | Close P-0003 — `[DONE]` with Scope 3 integration test waived | [DONE] |
 | [T-0010](T-0010.md) | Dev-only TOTP bypass for browser test automation | [DONE] |
 | [T-0011](T-0011.md) | `workflow_dispatch` escape hatch for the TST deploy | [DONE] |
+| [T-0012](T-0012.md) | Stop backing up app runtime data on deploy; keep 2 snapshots | [DONE] |
