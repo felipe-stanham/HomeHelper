@@ -40,8 +40,20 @@ jobs:
           BACKUP_DIR="/opt/latarnia/backups/tst"
           mkdir -p "$BACKUP_DIR"
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          rsync -a --exclude='.git' /opt/latarnia/tst/ "$BACKUP_DIR/$TIMESTAMP/"
-          ls -1t "$BACKUP_DIR" | tail -n +6 | xargs -I {} rm -rf "$BACKUP_DIR/{}"
+          # The point of this snapshot is to recover host-local *gitignored* files that
+          # `git reset --hard origin/tst` cannot restore (config/config.json, secrets/,
+          # caddy/). `data/` and `apps/` are also gitignored, but reset never touches them
+          # either, so copying them buys no rollback safety — and they hold app runtime
+          # data (750+ scraped PDFs on tst). `.venv` is likewise derived — rebuilt from
+          # requirements.txt. Together they were ~1.5 GB duplicated on every deploy.
+          # Anchored with a leading `/` so only the env root's own data/, apps/ and
+          # .venv/ are skipped, not a nested directory that shares the name.
+          rsync -a --exclude='.git' --exclude='/data/' --exclude='/apps/' \
+            --exclude='/.venv/' \
+            /opt/latarnia/tst/ "$BACKUP_DIR/$TIMESTAMP/"
+          # Keep the 2 most recent snapshots (the one just taken, plus the previous
+          # deploy's). `tail -n +3` drops everything from the 3rd-newest on.
+          ls -1t "$BACKUP_DIR" | tail -n +3 | xargs -r -I {} rm -rf "$BACKUP_DIR/{}"
 
       - name: Pull latest code
         run: |
