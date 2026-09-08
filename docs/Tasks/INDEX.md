@@ -14,3 +14,7 @@
 | [T-0010](T-0010.md) | Dev-only TOTP bypass for browser test automation | [DONE] |
 | [T-0011](T-0011.md) | `workflow_dispatch` escape hatch for the TST deploy | [DONE] |
 | [T-0012](T-0012.md) | Stop backing up app runtime data on deploy; keep 2 snapshots | [DONE] |
+| [T-0013](T-0013.md) | Template sync v0.3.0 + documentation housekeeping | [DONE] |
+| [T-0014](T-0014.md) | Secret Manager leaves stale per-app secret files | [ ] |
+| [T-0015](T-0015.md) | Dead app-count regression guard in both deploy workflows | [ ] |
+| [T-0016](T-0016.md) | `pytest.ini` is inert; suite imports by alphabetical luck | [ ] |
