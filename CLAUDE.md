@@ -1,4 +1,4 @@
-<!-- TEMPLATE VERSION: 0.2.1 -->
+<!-- TEMPLATE VERSION: 0.3.0 -->
 <!-- DO NOT EDIT — managed by ClaudeCodeTemplate -->
 <!-- Project-specific instructions go in docs/SYSTEM.md -->
 

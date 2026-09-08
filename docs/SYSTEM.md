@@ -29,6 +29,16 @@ Latarnia is a unified home automation platform for Raspberry Pi 5 (8GB RAM) that
 - All apps must provide a `latarnia.json` manifest and `requirements.txt`
 - App specification details in `docs/System/app-specification.md`
 
+## Artifact Indexes
+Work artifacts follow the ladder Pitch → Task → Project. Load an index only when
+you need to see open work; never at session startup.
+
+| Index | Contents |
+|-------|----------|
+| [`docs/Pitches/INDEX.md`](Pitches/INDEX.md) | Open, promoted and archived pitches (`I-xxxx.md`) |
+| [`docs/Tasks/INDEX.md`](Tasks/INDEX.md) | Open and completed ad-hoc tasks (`T-xxxx.md`) |
+| [`docs/Projects/INDEX.md`](Projects/INDEX.md) | Active and completed projects (`P-xxxx.md`) |
+
 ## Projects
 | ID      | Name            | Status      | Summary                                              |
 |---------|-----------------|-------------|------------------------------------------------------|
@@ -48,7 +58,7 @@ Latarnia is a unified home automation platform for Raspberry Pi 5 (8GB RAM) that
 
 | Tool        | Config location  | Purpose                                                |
 |-------------|------------------|--------------------------------------------------------|
-| pytest      | `tests/unit/`    | Unit tests with mocks — run via `python3 -m pytest tests/ -v --tb=short --no-cov` |
+| pytest      | `tests/unit/`, `tests/integration/` | Run via `PYTHONPATH=src python3 -m pytest tests/ -q` (486 passed, 1 skipped as of T-0013). **`PYTHONPATH=src` is required** — the package is not installed in the venv and `pytest.ini` is inert (see T-0016); without it collection fails. |
 | Playwright MCP | `.mcp.json`  | Browser-level testing for dashboards and web UIs — available as `playwright` MCP server |
 | latarnia-tst MCP | `.mcp.json` | SSE connection to TST environment — interact with deployed app tools |
 
@@ -79,7 +89,19 @@ versions; each host is selected by an explicit self-hosted runner label (never b
 the default `ARM64`/`X64` labels). Hosts, labels, and per-host bootstrap are in
 `docs/local/deployment.md`.
 
-## Direction of Travel — Future V2 (candidate P-0006, not scheduled)
+## Direction of Travel — Future V2 (no ID assigned, not scheduled)
+
+> **Status as of 2026-09-08 (T-0013).** This section is a 2026-04-24 record and has
+> been partly overtaken by shipped work. Read it as history plus the remaining idea,
+> not as a plan:
+> - The "candidate P-0006" label it used to carry is obsolete — P-0006 became
+>   Secret Manager. No ID is reserved for V2.
+> - **Supervision and logging: shipped** in P-0005 (`Restart=on-failure`, journald).
+> - **Reverse proxy: shipped** in P-0008 — `web_proxy.py` was replaced by Caddy with
+>   TLS and `forward_auth`, so the "nginx required?" row and the TLS trigger below
+>   are already answered and settled.
+> - **Still open:** collapsing the parallel `/api/apps/{id}/process/*` and
+>   `/api/services/{id}/*` lifecycle APIs into one canonical API.
 
 **Premise (recorded 2026-04-24):** Latarnia currently re-implements several patterns that mature tools already provide — process supervision, log aggregation, reverse proxying, health polling. At today's scale (1–2 apps) this is harmless. At 10+ apps the duplication starts to sting. P-0005 activates systemd per-app as an incremental step in the right direction. A potential V2 goes further: **thin the platform down to the parts that are actually Latarnia-specific** (MCP gateway, manifest-driven provisioning, Redis Streams coordination), and delegate the rest (lifecycle → systemd, logs → journald, reverse proxy → nginx/Caddy).
 
