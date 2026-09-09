@@ -29,25 +29,36 @@ Latarnia is a unified home automation platform for Raspberry Pi 5 (8GB RAM) that
 - All apps must provide a `latarnia.json` manifest and `requirements.txt`
 - App specification details in `docs/System/app-specification.md`
 
+## Artifact Indexes
+Work artifacts follow the ladder Pitch → Task → Project. Load an index only when
+you need to see open work; never at session startup.
+
+| Index | Contents |
+|-------|----------|
+| [`docs/Pitches/INDEX.md`](Pitches/INDEX.md) | Open, promoted and archived pitches (`I-xxxx.md`) |
+| [`docs/Tasks/INDEX.md`](Tasks/INDEX.md) | Open and completed ad-hoc tasks (`T-xxxx.md`) |
+| [`docs/Projects/INDEX.md`](Projects/INDEX.md) | Active and completed projects (`P-xxxx.md`) |
+
 ## Projects
 | ID      | Name            | Status      | Summary                                              |
 |---------|-----------------|-------------|------------------------------------------------------|
 | P-0001  | Latarnia Core | [DONE]      | Full platform: core infra, app/service/UI management, dashboard, deployment |
 | P-0002  | Latarnia        | [DONE]      | Platform rename + evolved manifests, Postgres, MCP gateway, Redis Streams, web UI proxy |
-| P-0003  | Dynamic MCP Port Allocation | [DONE] | Runtime allocation of MCP ports from configured range |
+| P-0003  | Dynamic MCP Port Allocation | [DONE] | Runtime allocation of MCP ports from configured range; manifests no longer declare `mcp_port`. Closed 2026-08-06 with the Scope 3 end-to-end integration test waived, not executed — unit layer green, live gateway-on-allocated-port path unverified (see P-0003 Closure Note). |
 | P-0004  | Env-Scoped Services | [DONE]      | Env-scope per-app systemd units + bootstrap docs for main platform units |
 | P-0005  | Activate Systemd Per-App | [DONE] | LaunchRouter dispatches Linux→ServiceManager, Darwin→SubprocessLauncher; per-app units use venv Python, Restart=on-failure, ENV= (no PartOf= — independent lifetimes); startup reconciliation claims ports for already-running units; linger warning on startup; `/api/apps` reports combined systemd+`/health` status (green/yellow/red/grey); logs via journald on Linux. |
 | P-0006  | Secret Manager  | [DONE] | Per-env master `secrets.env` (operator-edited, mode 600) → SecretManager filters per-app to declared `requires_secrets` → systemd `EnvironmentFile=-` (Linux) / Popen `env=` (Darwin). Refuse-to-start when missing; `GET /api/secrets` listing (no values); zero secret values in any log. |
 | P-0007  | LiteLLM Gateway | [CANCELLED] | Single shared `latarnia-litellm-{env}.service` (systemd, like Redis); `LiteLLMProvisioner` provisions per-app API keys and injects `LITELLM_BASE_URL`/`LITELLM_API_KEY` into app environments; model gate blocks startup if declared models are unavailable. Cancelled — no concrete need at current scale. |
 | P-0008  | Caddy + Auth    | [DONE] | Replace `web_proxy.py` with Caddy (TLS, forward_auth); TOTP login (no passwords); per-app role model (none/webUI-low/webUI-med/webUI-full/full); JWT machine tokens for API/MCP; `X-Latarnia-App-Role` header injection; `latarnia_platform_{env}` Postgres DB for auth state. |
 | P-0009  | App Lifecycle Cleanup | [DONE] | Orphan detection on discovery (auto-stop+unlink unit for deleted app folders); full-teardown DELETE endpoint; Delete App button in dashboard detail modal. |
-| P-0010  | Auth Follow-ups & Authz Hardening | [ ] Not Started | P-0008 follow-ups before prd: root→/dashboard redirect; post-login return-to-URL + open-redirect hardening; Superuser-only platform restart & logs (API 403 + UI hide); activity feed default-deny filtered to `full`-role apps + `/ws/activity` Superuser-only; user hard-delete (migration 006 `granted_by` SET NULL; deactivate moves to POST …/deactivate) + reactivate + re-issue TOTP setup; machine-token revocation on deactivate/re-issue. |
+| P-0010  | Auth Follow-ups & Authz Hardening | [DONE] | P-0008 follow-ups before prd: root→/dashboard redirect; post-login return-to-URL + open-redirect hardening; Superuser-only platform restart & logs (API 403 + UI hide); activity feed default-deny filtered to `full`-role apps + `/ws/activity` Superuser-only; user hard-delete (migration 006 `granted_by` SET NULL; deactivate moves to POST …/deactivate) + reactivate + re-issue TOTP setup; machine-token revocation on deactivate/re-issue. |
+| P-0011  | Case-Insensitive Usernames | [DONE] | Usernames folded to lowercase at the `UserStore` boundary (`normalize_username`), so the plain `UNIQUE` enforces case-insensitive uniqueness — no CITEXT, no functional index. Migration 007 folds existing rows, auto-renames case-variant collisions (oldest row keeps the name, newer ones get the lowest free numeric suffix), and adds `CHECK (username = lower(username))`. Postgres migration notices now reach the platform logger. |
 
 ## Testing Tools
 
 | Tool        | Config location  | Purpose                                                |
 |-------------|------------------|--------------------------------------------------------|
-| pytest      | `tests/unit/`    | Unit tests with mocks — run via `python3 -m pytest tests/ -v --tb=short --no-cov` |
+| pytest      | `tests/unit/`, `tests/integration/` | Run via `PYTHONPATH=src python3 -m pytest tests/ -q` (486 passed, 1 skipped as of T-0013). **`PYTHONPATH=src` is required** — the package is not installed in the venv and `pytest.ini` is inert (see T-0016); without it collection fails. |
 | Playwright MCP | `.mcp.json`  | Browser-level testing for dashboards and web UIs — available as `playwright` MCP server |
 | latarnia-tst MCP | `.mcp.json` | SSE connection to TST environment — interact with deployed app tools |
 
@@ -78,7 +89,19 @@ versions; each host is selected by an explicit self-hosted runner label (never b
 the default `ARM64`/`X64` labels). Hosts, labels, and per-host bootstrap are in
 `docs/local/deployment.md`.
 
-## Direction of Travel — Future V2 (candidate P-0006, not scheduled)
+## Direction of Travel — Future V2 (no ID assigned, not scheduled)
+
+> **Status as of 2026-09-08 (T-0013).** This section is a 2026-04-24 record and has
+> been partly overtaken by shipped work. Read it as history plus the remaining idea,
+> not as a plan:
+> - The "candidate P-0006" label it used to carry is obsolete — P-0006 became
+>   Secret Manager. No ID is reserved for V2.
+> - **Supervision and logging: shipped** in P-0005 (`Restart=on-failure`, journald).
+> - **Reverse proxy: shipped** in P-0008 — `web_proxy.py` was replaced by Caddy with
+>   TLS and `forward_auth`, so the "nginx required?" row and the TLS trigger below
+>   are already answered and settled.
+> - **Still open:** collapsing the parallel `/api/apps/{id}/process/*` and
+>   `/api/services/{id}/*` lifecycle APIs into one canonical API.
 
 **Premise (recorded 2026-04-24):** Latarnia currently re-implements several patterns that mature tools already provide — process supervision, log aggregation, reverse proxying, health polling. At today's scale (1–2 apps) this is harmless. At 10+ apps the duplication starts to sting. P-0005 activates systemd per-app as an incremental step in the right direction. A potential V2 goes further: **thin the platform down to the parts that are actually Latarnia-specific** (MCP gateway, manifest-driven provisioning, Redis Streams coordination), and delegate the rest (lifecycle → systemd, logs → journald, reverse proxy → nginx/Caddy).
 

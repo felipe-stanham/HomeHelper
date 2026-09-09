@@ -254,6 +254,8 @@ These tests require the Playwright MCP server and a running local dev instance o
 
 - **test_totp_login:** `POST /auth/login` with username `admin` + a valid 6-digit code. -> 302/303 with `latarnia_session` cookie. Replaying the same code within its 30s window -> rejected.
 - **test_verify_headers:** `GET /auth/verify` with a valid session cookie and `X-Forwarded-Uri: /apps/example_full_app/`. -> 200 with `X-Latarnia-User`, `X-Latarnia-App-Role`, `X-Latarnia-Is-Super`. Without a cookie -> 401.
+- **test_dev_totp_bypass_is_dev_only (T-0010):** Build the auth gate with `ENV=tst` and `LATARNIA_DEV_TOTP_BYPASS=1`. -> `dev_totp_bypass_enabled()` returns `False` and the secrets loader is never called; same for `ENV=prd`. With `ENV=dev` + the flag, `POST /auth/login` with username `admin` and code `000000` -> 303 with a `latarnia_session` cookie; without the flag the same request -> 401. An unknown or inactive username -> 401 even with the bypass active.
+- **test_login_is_case_insensitive (P-0011):** With the superuser enrolled as `admin`, `POST /auth/login` with username `ADMIN` + a valid 6-digit code. -> 303 to `/dashboard` with a `latarnia_session` cookie. `POST /api/auth/users` `{"username":"ADMIN"}` as a superuser -> 409 `username already exists`, and `SELECT username FROM users` never contains an uppercase character.
 
 ### Roles
 
@@ -270,3 +272,8 @@ These tests require the Playwright MCP server and a running local dev instance o
 
 - **test_example_webui_role_header:** `GET http://localhost:8100/` with header `X-Latarnia-App-Role: webUI-low` -> no "Add Item" form. With `full` -> "Add Item" form present and an "Admin" section. No header -> defaults to full (backward compatible).
 - **test_mcp_requires_bearer:** Connect an MCP client to `/mcp/sse` without a Bearer token -> 401. With a valid in-scope token -> tool list scoped to the token's apps; the per-app MCP server receives `X-Latarnia-App-Role`.
+
+### Multi-Host prd Parity
+
+- **test_prd_hosts_same_commit:** After any `main` deploy, `git -C /opt/latarnia/prd rev-parse HEAD` on **every** prd host (homeserver, hetzner-latarnia-1). -> All equal to `origin/main`. Any mismatch means one host's matrix leg failed or its runner was offline — re-run via **Actions -> Deploy to PRD -> Run workflow** for that host.
+- **test_tst_never_lands_on_prd_host:** A `tst` deploy run's job. -> Runner name is the homeserver runner and its labels include `homeserver`. A tst job on any prd-only host is a regression in the `runs-on` label pinning.

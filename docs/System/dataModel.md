@@ -247,18 +247,18 @@ erDiagram
 
 The platform owns a separate Postgres database — `latarnia_platform_{env}` (e.g., `latarnia_platform_dev`, `latarnia_platform_tst`, `latarnia_platform_prd`) — created and migrated by `AuthDB` (`src/latarnia/auth/db.py`) at Latarnia startup. This DB is **distinct from the per-app databases** provisioned by the DB Provisioner; it uses the platform's admin credentials and is never passed to App processes.
 
-Five tables live in this database. Migrations are in `src/latarnia/auth/migrations/001–005` and applied via the same sequential runner + `schema_versions` pattern used by the DB Provisioner.
+Five tables live in this database. Migrations are in `src/latarnia/auth/migrations/001–007` and applied via the same sequential runner + `schema_versions` pattern used by the DB Provisioner.
 
 ```mermaid
 erDiagram
     users {
         uuid id PK
-        string username
+        string username "always stored lowercase; CHECK (username = lower(username)) named users_username_lowercase; plain UNIQUE therefore enforces case-insensitive uniqueness"
         boolean is_superuser
         boolean is_active
         string setup_token "nullable; single-use TOTP enrollment token"
         timestamp setup_token_expires_at "nullable; expires 24h after creation"
-        timestamp created_at
+        timestamp created_at "orders collision renames in migration 007 (oldest row keeps the plain lowercase name)"
         timestamp last_login_at
     }
 
@@ -310,6 +310,7 @@ erDiagram
 ```
 
 **Key field notes:**
+- `users.username`: normalization happens at a single boundary — `normalize_username()` in `src/latarnia/auth/users.py`, called from both `UserStore.create_user` and `UserStore.get_user_by_username`. Every read and every write is folded to lowercase there, so `routes.py` and `USERNAME_RE` are unchanged; mixed-case input is normalized rather than rejected.
 - `user_credentials.credential_data`: for TOTP, contains `{"totp_secret_enc": "<base64-nonce+ciphertext>"}`. The TOTP secret is encrypted with AES-256-GCM using `LATARNIA_TOTP_ENC_KEY` from `secrets.env`. Nonce is prepended to ciphertext.
 - `sessions.token_hash`: cookie value is a random UUIDv4 never persisted; only its SHA-256 hash is stored.
 - `app_roles.role` enum: `none`, `webUI-low`, `webUI-med`, `webUI-full`, `full`. Default effective role when no row exists: `none`. `full` is the only role granting REST API access.

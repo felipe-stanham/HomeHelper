@@ -3,6 +3,19 @@ name: Deploy to TST
 on:
   push:
     branches: [tst]
+  # Escape hatch (T-0011), mirroring deploy-prd.yml: re-deploy the current `tst`
+  # without needing an empty commit. Added after a promotion where two
+  # consecutive pushes to `tst` created no workflow run at all — Actions enabled,
+  # workflow active, trigger correct, YAML valid, both runners online, nothing
+  # queued. With no manual trigger there was no way to deploy at all.
+  #
+  # Verified 2026-08-06: dispatchable via the REST API against a non-default ref
+  # even before this trigger reached `main` —
+  #   gh workflow run "Deploy to TST" --ref tst
+  # succeeded and deployed. (The "must be on the default branch" rule applies to
+  # the Run-workflow button in the UI, not to the API.) Use the CLI form above if
+  # the button is not showing.
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -27,8 +40,20 @@ jobs:
           BACKUP_DIR="/opt/latarnia/backups/tst"
           mkdir -p "$BACKUP_DIR"
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          rsync -a --exclude='.git' /opt/latarnia/tst/ "$BACKUP_DIR/$TIMESTAMP/"
-          ls -1t "$BACKUP_DIR" | tail -n +6 | xargs -I {} rm -rf "$BACKUP_DIR/{}"
+          # The point of this snapshot is to recover host-local *gitignored* files that
+          # `git reset --hard origin/tst` cannot restore (config/config.json, secrets/,
+          # caddy/). `data/` and `apps/` are also gitignored, but reset never touches them
+          # either, so copying them buys no rollback safety — and they hold app runtime
+          # data (750+ scraped PDFs on tst). `.venv` is likewise derived — rebuilt from
+          # requirements.txt. Together they were ~1.5 GB duplicated on every deploy.
+          # Anchored with a leading `/` so only the env root's own data/, apps/ and
+          # .venv/ are skipped, not a nested directory that shares the name.
+          rsync -a --exclude='.git' --exclude='/data/' --exclude='/apps/' \
+            --exclude='/.venv/' \
+            /opt/latarnia/tst/ "$BACKUP_DIR/$TIMESTAMP/"
+          # Keep the 2 most recent snapshots (the one just taken, plus the previous
+          # deploy's). `tail -n +3` drops everything from the 3rd-newest on.
+          ls -1t "$BACKUP_DIR" | tail -n +3 | xargs -r -I {} rm -rf "$BACKUP_DIR/{}"
 
       - name: Pull latest code
         run: |

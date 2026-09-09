@@ -118,6 +118,27 @@ async def lifespan(app: FastAPI):
             "will fail. Add it to secrets.env (mode 600)."
         )
 
+    # T-0010: surface the dev TOTP bypass loudly, and alarm if the flag ever
+    # appears outside dev — that is the config-drift failure mode that ruled out
+    # gating the bypass on ENV alone.
+    if is_truthy(_load_platform_secret(DEV_TOTP_BYPASS_SECRET)):
+        # Driven by the same predicate that governs validate(), so the log can
+        # never disagree with the actual behaviour.
+        if _dev_totp_bypass_enabled():
+            logger.warning(
+                "%s is ACTIVE — TOTP validation is disabled and ANY 6-digit code "
+                "will authenticate any active user. Intended for browser test "
+                "automation in dev only. Remove it from secrets.env when done.",
+                DEV_TOTP_BYPASS_SECRET,
+            )
+        else:
+            logger.error(
+                "%s is set but the dev gate is NOT satisfied (raw ENV=%r) — "
+                "IGNORING it. This flag is dev-only and must not exist in a "
+                "tst/prd secrets.env; remove it.",
+                DEV_TOTP_BYPASS_SECRET, _raw_env(),
+            )
+
     # Linger check: per-app user units only survive logout when linger is on.
     # Warn loudly but do not block startup — the main platform itself runs as
     # a system-scope unit and is unaffected by user-mode linger.
@@ -321,6 +342,9 @@ from .auth.users import UserStore
 from .auth.sessions import SessionStore
 from .auth.roles import RoleStore
 from .auth.providers import TOTPAuthProvider
+from .auth.dev_bypass import (
+    DEV_TOTP_BYPASS_SECRET, dev_totp_bypass_enabled, is_truthy,
+)
 from .auth.jwt_auth import JWTAuth
 from .auth.tokens import MachineTokenStore
 from .auth.middleware import JWTAuthMiddleware
@@ -358,12 +382,34 @@ def _jwt_secret_loader() -> str:
     return raw
 
 
+def _raw_env() -> Optional[str]:
+    """The unprocessed ENV value, for the dev-bypass gate only (T-0010).
+
+    Deliberately NOT config_manager.get_env(): that helper falls back to "dev" for
+    an unset or malformed ENV, which would make the bypass gate fail open on a prd
+    host with a typo'd ENV. See auth/dev_bypass.py.
+    """
+    return os.environ.get("ENV")
+
+
+def _dev_totp_bypass_enabled() -> bool:
+    """Whether TOTP validation may be bypassed (T-0010). See auth/dev_bypass.py.
+
+    Note `_load_platform_secret` accepts the flag from the process environment as
+    well as secrets.env (it is the shared platform-secret helper). That is safe
+    here because the ENV condition above is evaluated independently — an env var
+    alone cannot activate the bypass outside a genuinely-dev process.
+    """
+    return dev_totp_bypass_enabled(_raw_env, _load_platform_secret)
+
+
 auth_db = AuthDB(config_manager, pg_client)
 user_store = UserStore(auth_db)
 session_store = SessionStore(auth_db, config_manager)
 role_store = RoleStore(auth_db, user_store)
 totp_provider = TOTPAuthProvider(
-    auth_db, _totp_key_loader, issuer=config_manager.config.auth.totp_issuer
+    auth_db, _totp_key_loader, issuer=config_manager.config.auth.totp_issuer,
+    dev_bypass=_dev_totp_bypass_enabled,
 )
 jwt_auth = JWTAuth(_jwt_secret_loader)
 token_store = MachineTokenStore(auth_db, jwt_auth)

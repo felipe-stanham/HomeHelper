@@ -4,6 +4,10 @@ CRUD over the `users` table plus the setup-token lifecycle. The first active
 user is the superuser, bootstrapped under username ``admin`` on first run.
 Invited users are created inactive with a one-time setup token and become
 active once they complete TOTP enrollment.
+
+Usernames are case insensitive (P-0011): every read and write goes through
+``normalize_username`` here, so the plain UNIQUE on `users.username` enforces
+case-insensitive uniqueness without CITEXT or a functional index.
 """
 from __future__ import annotations
 
@@ -22,6 +26,18 @@ _USER_COLS = (
 )
 
 
+def normalize_username(raw: str) -> str:
+    """Fold a username to its canonical stored form: stripped and lowercased.
+
+    Applied on both the write and the read path so `Felipe`, `FELIPE`, and
+    `  felipe  ` all resolve to the single row `felipe`. Usernames are ASCII by
+    construction (USERNAME_RE in routes.py), so ``lower()`` is sufficient and
+    ``casefold()`` buys nothing. Strips independently of routes.py's own strip:
+    the login path never goes through it.
+    """
+    return (raw or "").strip().lower()
+
+
 class UserStore:
     def __init__(self, auth_db):
         self.db = auth_db
@@ -37,7 +53,8 @@ class UserStore:
 
     def get_user_by_username(self, username: str):
         return self.db.query_one(
-            f"SELECT {_USER_COLS} FROM users WHERE username = %s", (username,)
+            f"SELECT {_USER_COLS} FROM users WHERE username = %s",
+            (normalize_username(username),),
         )
 
     def list_users(self) -> list:
@@ -62,6 +79,7 @@ class UserStore:
         Returns (user_row, setup_token). The invitee completes enrollment at
         /auth/setup?token=<setup_token>.
         """
+        username = normalize_username(username)
         token = secrets.token_urlsafe(32)
         expires = datetime.now(timezone.utc) + timedelta(hours=setup_ttl_hours)
         row = self.db.execute_returning(
